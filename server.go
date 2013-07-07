@@ -270,7 +270,7 @@ func (s *Server) HeartbeatTimeout() time.Duration {
 }
 
 // Sets the heartbeat timeout.
-func (s *Server) setHeartbeatTimeout(duration time.Duration) {
+func (s *Server) SetHeartbeatTimeout(duration time.Duration) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -327,7 +327,8 @@ func (s *Server) Initialize() error {
 //  --------    timeout    -----------                        -----------
 // |Follower| ----------> | Candidate |--------------------> |  Leader   |
 //  --------               -----------                        -----------
-//     ^              stepDown |                       stepDown      |
+//     ^      stepDown/discover|                                     |
+//                  new leader |                       stepDown      |
 //     |_______________________|____________________________________ |
 //
 // The main Loop for the server
@@ -351,9 +352,8 @@ func (s *Server) StartServerLoop(role string) {
 
 		case Candidate:
 			debugln(s.GetState() + "start Candiate")
-			stop, leader = s.startCandidateLoop()
 
-			s.votedFor = ""
+			stop, leader = s.startCandidateLoop()
 
 			if stop {
 				return
@@ -466,20 +466,21 @@ func (s *Server) startFollowerLoop() (stop bool) {
 func (s *Server) startCandidateLoop() (stop bool, leader bool) {
 
 	// the server must be a follower
-	if s.state != Follower && s.state != Stopped {
-		panic("startCandidateLoop")
-	}
+	// if s.state != Follower && s.state != Stopped {
+	// 	panic("startCandidateLoop")
+	// }
 
+	s.stateMutex.Lock()
+	// increase term
+	s.currentTerm++
 	s.state = Candidate
 	s.leader = ""
 	s.votedFor = s.Name()
+	s.stateMutex.Unlock()
 
 	lastLogIndex, lastLogTerm := s.log.lastInfo()
 
 	for {
-
-		// increase term
-		s.currentTerm++
 
 		// Request votes from each of our peers.
 		c := make(chan *RequestVoteResponse, len(s.peers))
@@ -499,6 +500,26 @@ func (s *Server) startCandidateLoop() (stop bool, leader bool) {
 
 		if timeout {
 			debugln(s.Name(), " election timeout, restart")
+			s.stateMutex.Lock()
+
+			if s.state == Follower {
+				select {
+				case <-s.stepDown:
+
+				default:
+					panic("stepdowned! but where is my signal")
+				}
+				s.stateMutex.Lock()
+				return false, false
+			}
+
+
+			// increase term
+			s.currentTerm++
+			s.state = Candidate
+			s.leader = ""
+			s.votedFor = s.Name()
+			s.stateMutex.Unlock()
 			// restart promotion
 			continue
 		}
@@ -609,23 +630,27 @@ func (s *Server) startCandidateSelect(c chan *RequestVoteResponse) (bool, bool, 
 				if resp.VoteGranted == true {
 					votesGranted++
 
-				} else if resp.Term > s.currentTerm {
+				} else {
 					s.stateMutex.Lock()
+					if resp.Term > s.currentTerm {
 
-					// go from internal path
-					// we may need to eat the stepdown
-					select {
-					case <-s.stepDown:
 
-					default:
+						// go from internal path
+						// we may need to eat the stepdown
+						select {
+						case <-s.stepDown:
 
+						default:
+
+						}
+
+						s.state = Follower
+						s.currentTerm = resp.Term
+						debugln(s.GetState() + "select step down")
+						s.stateMutex.Unlock()
+						return false, false, false
 					}
-
-					s.state = Follower
-					s.currentTerm = resp.Term
-					debugln(s.GetState() + "select step down")
 					s.stateMutex.Unlock()
-					return false, false, false
 				}
 			}
 
@@ -754,6 +779,10 @@ func (s *Server) Do(command Command) (interface{}, error) {
 		return nil, err
 	}
 
+	commandIndex := s.log.currentIndex()
+
+	debugln("[Do] Command ", command.CommandName(), " at index ", commandIndex)
+
 	s.response <- flushResponse{term, true, nil, nil}
 
 	// to speed up the response time
@@ -765,17 +794,15 @@ func (s *Server) Do(command Command) (interface{}, error) {
 	// 	peer.heartbeatTimer.fire()
 	// }
 
-	debugln("[Do] join!")
-
 	// timeout here
 	select {
 	case <-entry.commit:
-		debugln("[Do] finish!")
+		debugln("[Do] finish index ", commandIndex)
 		result := entry.result
 		entry.result = nil
 		return result, nil
 	case <-time.After(time.Second):
-		debugln("[Do] fail!")
+		debugln("[Do] fail index ", commandIndex)
 		return nil, errors.New("Command commit fails")
 	}
 }
@@ -798,7 +825,7 @@ func (s *Server) AppendEntries(req *AppendEntriesRequest) (*AppendEntriesRespons
 	debugln("Peer ", s.Name(), "received heartbeat from ", req.LeaderName,
 		" ", req.Term, " ", s.currentTerm, " ", time.Now())
 
-	s.setCurrentTerm(req.Term)
+	s.checkTerm(req.Term, true)
 
 	// Update the current leader.
 	s.leader = req.LeaderName
@@ -871,7 +898,7 @@ func (s *Server) RequestVote(req *RequestVoteRequest) (*RequestVoteResponse, err
 		return newRequestVoteResponse(s.currentTerm, false), fmt.Errorf("raft.Server: Stale term: %v < %v", req.Term, s.currentTerm)
 	}
 
-	s.setCurrentTerm(req.Term)
+	s.checkTerm(req.Term, false)
 
 	// If we've already voted for a different candidate then don't vote for this candidate.
 	if s.votedFor != "" && s.votedFor != req.CandidateName {
@@ -902,15 +929,16 @@ func (s *Server) RequestVote(req *RequestVoteRequest) (*RequestVoteResponse, err
 // Updates the current term on the server if the term is greater than the
 // server's current term. When the term is changed then the server's vote is
 // cleared and its state is changed to be a follower.
-func (s *Server) setCurrentTerm(term uint64) {
+// If a new leader is discovered when the server is candidate, the 
+// server should also stepdown
+func (s *Server) checkTerm(term uint64, append bool) {
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
+
 	if term > s.currentTerm {
 		s.votedFor = ""
-
-		s.stateMutex.Lock()
 		if s.state == Leader || s.state == Candidate {
 			debugln(s.Name(), " should step down to a follower from ", s.state)
-
-			s.state = Follower
 
 			select {
 			case s.stepDown <- term:
@@ -920,14 +948,28 @@ func (s *Server) setCurrentTerm(term uint64) {
 			}
 			debugln(s.Name(), " step down to a follower from ", s.state)
 			s.currentTerm = term
-			s.stateMutex.Unlock()
+			s.state = Follower
 			return
 		}
-
-		s.stateMutex.Unlock()
 		// update term after stop all the peer
 		s.currentTerm = term
+
+	// discovery new leader
+	} else if term == s.currentTerm && append {
+		if s.state == Candidate {
+			debugln(s.Name(), " should step down to a follower from ", s.state)
+
+			select {
+			case s.stepDown <- term:
+
+			default:
+				panic("cannot stepdown")
+			}
+			debugln(s.Name(), " step down to a follower from ", s.state)
+			s.state = Follower
+		}
 	}
+
 }
 
 //--------------------------------------
