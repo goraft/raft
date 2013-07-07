@@ -413,12 +413,12 @@ func TestServerMultiNode(t *testing.T) {
 
 		if name == "1" {
 			leader = server
-			server.setHeartbeatTimeout(testHeartbeatTimeout)
+			server.SetHeartbeatTimeout(testHeartbeatTimeout)
 			server.StartLeader()
 			time.Sleep(100 * time.Millisecond)
 		} else {
 			server.SetElectionTimeout(testElectionTimeout)
-			server.setHeartbeatTimeout(testHeartbeatTimeout)
+			server.SetHeartbeatTimeout(testHeartbeatTimeout)
 			server.StartFollower()
 			time.Sleep(10 * time.Millisecond)
 		}
@@ -492,7 +492,6 @@ func TestServerMultiNode(t *testing.T) {
 					debugln("retry")
 					retry++
 					leader = 0
-					Debug = true
 					time.Sleep(100 * time.Millisecond)
 					continue
 				}
@@ -509,7 +508,6 @@ func TestServerMultiNode(t *testing.T) {
 				t.Fatalf("wrong leader number %v", leader)
 			}
 			if leader == 1 {
-				Debug = false
 				break
 			}
 		}

@@ -270,7 +270,7 @@ func (s *Server) HeartbeatTimeout() time.Duration {
 }
 
 // Sets the heartbeat timeout.
-func (s *Server) setHeartbeatTimeout(duration time.Duration) {
+func (s *Server) SetHeartbeatTimeout(duration time.Duration) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -351,9 +351,8 @@ func (s *Server) StartServerLoop(role string) {
 
 		case Candidate:
 			debugln(s.GetState() + "start Candiate")
-			stop, leader = s.startCandidateLoop()
 
-			s.votedFor = ""
+			stop, leader = s.startCandidateLoop()
 
 			if stop {
 				return
@@ -754,6 +753,10 @@ func (s *Server) Do(command Command) (interface{}, error) {
 		return nil, err
 	}
 
+	commandIndex := s.log.currentIndex()
+
+	debugln("[Do] Command ", command.CommandName(), " at index ", commandIndex)
+
 	s.response <- flushResponse{term, true, nil, nil}
 
 	// to speed up the response time
@@ -765,17 +768,15 @@ func (s *Server) Do(command Command) (interface{}, error) {
 	// 	peer.heartbeatTimer.fire()
 	// }
 
-	debugln("[Do] join!")
-
 	// timeout here
 	select {
 	case <-entry.commit:
-		debugln("[Do] finish!")
+		debugln("[Do] finish index ", commandIndex)
 		result := entry.result
 		entry.result = nil
 		return result, nil
 	case <-time.After(time.Second):
-		debugln("[Do] fail!")
+		debugln("[Do] fail index ", commandIndex)
 		return nil, errors.New("Command commit fails")
 	}
 }
