@@ -27,7 +27,8 @@ const (
 )
 
 const (
-	MaxLogEntriesPerRequest = 200
+	MaxLogEntriesPerRequest         = 200
+	NumberOfLogEntreisAfterSnapshot = 200
 )
 
 const (
@@ -672,6 +673,7 @@ func (s *Server) AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 
 // Processes the "append entries" request.
 func (s *Server) processAppendEntriesRequest(req *AppendEntriesRequest) (*AppendEntriesResponse, bool) {
+
 	s.traceln("server.ae.process")
 
 	if req.Term < s.currentTerm {
@@ -707,6 +709,7 @@ func (s *Server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 // processed when the server is a leader. Responses received during other
 // states are dropped.
 func (s *Server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
+
 	// If we find a higher term then change to a follower and exit.
 	if resp.Term > s.currentTerm {
 		s.setCurrentTerm(resp.Term, "", false)
@@ -777,6 +780,7 @@ func (s *Server) RequestVote(req *RequestVoteRequest) *RequestVoteResponse {
 
 // Processes a "request vote" request.
 func (s *Server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVoteResponse, bool) {
+
 	// If the request is coming from an old term then reject it.
 	if req.Term < s.currentTerm {
 		s.debugln("server.rv.error: stale term")
@@ -910,7 +914,14 @@ func (s *Server) takeSnapshot() error {
 
 	s.saveSnapshot()
 
-	s.log.compact(lastIndex, lastTerm)
+	// We keep some log entries after the snapshot
+	// We do not want to send the whole snapshot
+	// to the slightly slow machines
+	if lastIndex > NumberOfLogEntreisAfterSnapshot {
+		compactIndex := lastIndex - NumberOfLogEntreisAfterSnapshot
+		compactTerm := s.log.getLogEntry(compactIndex).Term
+		s.log.compact(compactIndex, compactTerm)
+	}
 
 	return nil
 }
