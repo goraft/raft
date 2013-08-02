@@ -25,15 +25,36 @@ func TestHTTPTransporter(t *testing.T) {
 		}
 		server.Start()
 	}
-	f1 := func(server *Server, httpServer *http.Server) {
+	runTestHttpServers(&servers, transporter, f0, nopServer, nopServer)
+}
+
+func BenchmarkHttpTransporter(b *testing.B) {
+	transporter := NewHTTPTransporter("/raft")
+	transporter.DisableKeepAlives = true
+	numClients, numMessagesPerClient := 100, 100
+
+	servers := []*Server{}
+	f0 := func(server *Server, httpServer *http.Server) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			var wg sync.WaitGroup
+			for j := 0; j<numClients; j++ {
+				wg.Add(1)
+				go func() {
+					for k := 0; k<numMessagesPerClient; k++ {
+						server.Do(NOPCommand{})
+					}
+					wg.Done()
+				}()
+			}
+			wg.Wait()
+		}
 	}
-	f2 := func(server *Server, httpServer *http.Server) {
-	}
-	runTestHttpServers(t, &servers, transporter, f0, f1, f2)
+	runTestHttpServers(&servers, transporter, f0, nopServer, nopServer)
 }
 
 // Starts multiple independent Raft servers wrapped with HTTP servers.
-func runTestHttpServers(t *testing.T, servers *[]*Server, transporter *HTTPTransporter, callbacks ...func(*Server, *http.Server)) {
+func runTestHttpServers(servers *[]*Server, transporter *HTTPTransporter, callbacks ...func(*Server, *http.Server)) {
 	var wg sync.WaitGroup
 	httpServers := []*http.Server{}
 	listeners := []net.Listener{}
@@ -69,7 +90,7 @@ func runTestHttpServers(t *testing.T, servers *[]*Server, transporter *HTTPTrans
 	// Setup configuration.
 	for _, server := range *servers {
 		if _, err := (*servers)[0].Do(&DefaultJoinCommand{Name: server.Name()}); err != nil {
-			t.Fatalf("Server %s unable to join: %v", server.Name(), err)
+			panic(fmt.Sprintf("Server %s unable to join: %v", server.Name(), err))
 		}
 	}
 
@@ -88,3 +109,7 @@ func runTestHttpServers(t *testing.T, servers *[]*Server, transporter *HTTPTrans
 	// Wait until everything is done.
 	wg.Wait()
 }
+
+func nopServer(server *Server, httpServer *http.Server) {
+}
+
