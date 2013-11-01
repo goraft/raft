@@ -123,6 +123,8 @@ type server struct {
 	electionTimeout  time.Duration
 	heartbeatTimeout time.Duration
 
+	stopped chan bool
+
 	currentSnapshot         *Snapshot
 	lastSnapshot            *Snapshot
 	stateMachine            StateMachine
@@ -171,6 +173,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 		heartbeatTimeout:        DefaultHeartbeatTimeout,
 		maxLogEntriesPerRequest: MaxLogEntriesPerRequest,
 		connectionString:        connectionString,
+		stopped:                 make(chan bool),
 	}
 	s.eventDispatcher = newEventDispatcher(s)
 
@@ -465,6 +468,8 @@ func (s *server) Stop() {
 	s.send(&stopValue)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	// make sure the server has stopped before we close the log
+	<-s.stopped
 	s.log.close()
 }
 
@@ -553,9 +558,12 @@ func (s *server) loop() {
 			s.snapshotLoop()
 
 		case Stopped:
+			s.stopped <- true
 			return
 		}
 	}
+
+	s.stopped <- true
 }
 
 // Sends an event to the event loop to be processed. The function will wait
