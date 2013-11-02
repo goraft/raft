@@ -117,6 +117,7 @@ type server struct {
 	leader     string
 	peers      map[string]*Peer
 	mutex      sync.RWMutex
+	stateMutex sync.RWMutex
 	syncedPeer map[string]bool
 
 	c                chan *ev
@@ -264,15 +265,15 @@ func (s *server) LogPath() string {
 
 // Retrieves the current state of the server.
 func (s *server) State() string {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.stateMutex.RLock()
+	defer s.stateMutex.RUnlock()
 	return s.state
 }
 
 // Sets the state of the server.
 func (s *server) setState(state string) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
 
 	// Temporarily store previous values.
 	prevState := s.state
@@ -329,8 +330,8 @@ func (s *server) LastCommandName() string {
 
 // Get the state of the server for debugging
 func (s *server) GetState() string {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.stateMutex.RLock()
+	defer s.stateMutex.RUnlock()
 	return fmt.Sprintf("Name: %s, State: %s, Term: %v, CommitedIndex: %v ", s.name, s.state, s.currentTerm, s.log.commitIndex)
 }
 
