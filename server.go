@@ -467,8 +467,6 @@ func (s *server) Start() error {
 // Shuts down the server.
 func (s *server) Stop() {
 	s.send(&stopValue)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
 	// make sure the server has stopped before we close the log
 	<-s.stopped
 	s.log.close()
