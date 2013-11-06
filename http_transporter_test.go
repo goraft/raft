@@ -42,7 +42,7 @@ func runTestHttpServers(t *testing.T, servers *[]Server, transporter *HTTPTransp
 		port := 9000 + i
 
 		// Create raft server.
-		server := newTestServer(fmt.Sprintf("localhost:%d", port), transporter)
+		server := newTestServer(fmt.Sprintf("localhost:%d", port), transporter, 0, nil)
 		server.SetHeartbeatTimeout(testHeartbeatTimeout)
 		server.SetElectionTimeout(testElectionTimeout)
 		server.Start()
@@ -100,7 +100,7 @@ func BenchmarkSpeed(b *testing.B) {
 		port := 9000 + i
 
 		// Create raft server.
-		server := newTestServer(fmt.Sprintf("localhost:%d", port), transporter)
+		server := newTestServer(fmt.Sprintf("localhost:%d", port), transporter, 0, nil)
 		server.SetHeartbeatTimeout(testHeartbeatTimeout)
 		server.SetElectionTimeout(testElectionTimeout)
 		server.Start()
