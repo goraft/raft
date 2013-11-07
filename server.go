@@ -94,7 +94,7 @@ type Server interface {
 	Do(command Command) (interface{}, error)
 	TakeSnapshot() error
 	LoadSnapshot() error
-	SyncFunc() func(now time.Time)
+	SyncFunc() func(s Server, now time.Time)
 }
 
 type server struct {
@@ -123,7 +123,7 @@ type server struct {
 
 	connectionString string
 	syncDuration     time.Duration
-	syncFunc         func(now time.Time)
+	syncFunc         func(s Server, now time.Time)
 }
 
 // An event to be processed by the server's event loop.
@@ -140,7 +140,7 @@ type event struct {
 //------------------------------------------------------------------------------
 
 // Creates a new server with a log at the given path.
-func NewServer(name string, path string, transporter Transporter, stateMachine StateMachine, context interface{}, connectionString string, syncDuration time.Duration, syncFunc func(now time.Time)) (Server, error) {
+func NewServer(name string, path string, transporter Transporter, stateMachine StateMachine, context interface{}, connectionString string, syncDuration time.Duration, syncFunc func(s Server, now time.Time)) (Server, error) {
 	if name == "" {
 		return nil, errors.New("raft.Server: Name cannot be blank")
 	}
@@ -258,7 +258,7 @@ func (s *server) setState(state string) {
 }
 
 // Retrieves the syncFunc of the server
-func (s *server) SyncFunc() func(now time.Time) {
+func (s *server) SyncFunc() func(s Server, now time.Time) {
 	return s.syncFunc
 }
 

@@ -17,7 +17,7 @@ func (c SyncCommand) Apply(s Server) (interface{}, error) {
 	f := s.SyncFunc()
 
 	if f != nil {
-		f(c.Time)
+		f(s, c.Time)
 	}
 	return nil, nil
 }

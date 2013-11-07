@@ -693,7 +693,7 @@ func TestSync(t *testing.T) {
 
 	for _, name := range names {
 
-		syncFunc := func(now time.Time) {
+		syncFunc := func(s Server, now time.Time) {
 			mutex.Lock()
 			count++
 			mutex.Unlock()

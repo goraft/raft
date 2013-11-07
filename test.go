@@ -60,7 +60,7 @@ func setupLog(entries []*LogEntry) (*Log, string) {
 // Servers
 //--------------------------------------
 
-func newTestServer(name string, transporter Transporter, syncDuration time.Duration, syncFunc func(now time.Time)) Server {
+func newTestServer(name string, transporter Transporter, syncDuration time.Duration, syncFunc func(s Server, now time.Time)) Server {
 	p, _ := ioutil.TempDir("", "raft-server-")
 	if err := os.MkdirAll(p, 0644); err != nil {
 		panic(err.Error())
@@ -69,7 +69,7 @@ func newTestServer(name string, transporter Transporter, syncDuration time.Durat
 	return server
 }
 
-func newTestServerWithPath(name string, transporter Transporter, p string, syncDuration time.Duration, syncFunc func(now time.Time)) Server {
+func newTestServerWithPath(name string, transporter Transporter, p string, syncDuration time.Duration, syncFunc func(s Server, now time.Time)) Server {
 	server, _ := NewServer(name, p, transporter, nil, nil, "", syncDuration, syncFunc)
 	return server
 }
