@@ -22,7 +22,7 @@ import (
 
 // Ensure that we can request a vote from a server that has not voted.
 func TestServerRequestVote(t *testing.T) {
-	server := newTestServer("1", &testTransporter{})
+	server := newTestServer("1", &testTransporter{}, 0, nil)
 
 	server.Start()
 	if _, err := server.Do(&DefaultJoinCommand{Name: server.Name()}); err != nil {
@@ -38,7 +38,7 @@ func TestServerRequestVote(t *testing.T) {
 
 // // Ensure that a vote request is denied if it comes from an old term.
 func TestServerRequestVoteDeniedForStaleTerm(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 
 	s.Start()
 	if _, err := s.Do(&DefaultJoinCommand{Name: s.Name()}); err != nil {
@@ -61,7 +61,7 @@ func TestServerRequestVoteDeniedForStaleTerm(t *testing.T) {
 
 // Ensure that a vote request is denied if we've already voted for a different candidate.
 func TestServerRequestVoteDeniedIfAlreadyVoted(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 
 	s.Start()
 	if _, err := s.Do(&DefaultJoinCommand{Name: s.Name()}); err != nil {
@@ -84,7 +84,7 @@ func TestServerRequestVoteDeniedIfAlreadyVoted(t *testing.T) {
 
 // Ensure that a vote request is approved if vote occurs in a new term.
 func TestServerRequestVoteApprovedIfAlreadyVotedInOlderTerm(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 
 	s.Start()
 	if _, err := s.Do(&DefaultJoinCommand{Name: s.Name()}); err != nil {
@@ -197,7 +197,7 @@ func TestServerPromote(t *testing.T) {
 
 // Ensure we can append entries to a server.
 func TestServerAppendEntries(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 
 	s.SetHeartbeatTimeout(time.Second * 10)
 	s.Start()
@@ -238,7 +238,7 @@ func TestServerAppendEntries(t *testing.T) {
 
 //Ensure that entries with stale terms are rejected.
 func TestServerAppendEntriesWithStaleTermsAreRejected(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 
 	s.Start()
 
@@ -261,7 +261,7 @@ func TestServerAppendEntriesWithStaleTermsAreRejected(t *testing.T) {
 
 // Ensure that we reject entries if the commit log is different.
 func TestServerAppendEntriesRejectedIfAlreadyCommitted(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 	s.Start()
 	defer s.Stop()
 
@@ -285,7 +285,7 @@ func TestServerAppendEntriesRejectedIfAlreadyCommitted(t *testing.T) {
 
 // Ensure that we uncommitted entries are rolled back if new entries overwrite them.
 func TestServerAppendEntriesOverwritesUncommittedEntries(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 	s.Start()
 	defer s.Stop()
 
@@ -314,7 +314,7 @@ func TestServerAppendEntriesOverwritesUncommittedEntries(t *testing.T) {
 
 // Ensure that a follower cannot execute a command.
 func TestServerDenyCommandExecutionWhenFollower(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 	s.Start()
 	defer s.Stop()
 	var err error
@@ -377,7 +377,7 @@ func TestServerRecoverFromPreviousLogAndConf(t *testing.T) {
 
 	var leader Server
 	for _, name := range names {
-		s := newTestServer(name, transporter)
+		s := newTestServer(name, transporter, 0, nil)
 
 		mutex.Lock()
 		servers[name] = s
@@ -420,7 +420,7 @@ func TestServerRecoverFromPreviousLogAndConf(t *testing.T) {
 
 	for _, name := range names {
 		// with old path and disable transportation
-		s := newTestServerWithPath(name, disTransporter, paths[name])
+		s := newTestServerWithPath(name, disTransporter, paths[name], 0, nil)
 		servers[name] = s
 
 		s.Start()
@@ -459,7 +459,7 @@ func TestServerRecoverFromPreviousLogAndConf(t *testing.T) {
 
 // Ensure that we can start a single server and append to its log.
 func TestServerSingleNode(t *testing.T) {
-	s := newTestServer("1", &testTransporter{})
+	s := newTestServer("1", &testTransporter{}, 0, nil)
 	if s.State() != Stopped {
 		t.Fatalf("Unexpected server state: %v", s.State())
 	}
@@ -534,7 +534,7 @@ func TestServerMultiNode(t *testing.T) {
 
 	var leader Server
 	for _, name := range names {
-		s := newTestServer(name, transporter)
+		s := newTestServer(name, transporter, 0, nil)
 		defer s.Stop()
 
 		mutex.Lock()
@@ -646,6 +646,90 @@ func TestServerMultiNode(t *testing.T) {
 
 		toStop.SetTransporter(transporter)
 		toStop_1.SetTransporter(transporter)
+	}
+
+}
+
+func TestSync(t *testing.T) {
+	// Initialize the servers.
+	var mutex sync.RWMutex
+	servers := map[string]Server{}
+
+	transporter := &testTransporter{}
+	transporter.sendVoteRequestFunc = func(s Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
+		mutex.RLock()
+		target := servers[peer.Name]
+		mutex.RUnlock()
+
+		b, _ := json.Marshal(req)
+		clonedReq := &RequestVoteRequest{}
+		json.Unmarshal(b, clonedReq)
+
+		return target.RequestVote(clonedReq)
+	}
+	transporter.sendAppendEntriesRequestFunc = func(s Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {
+		mutex.RLock()
+		target := servers[peer.Name]
+		mutex.RUnlock()
+
+		b, _ := json.Marshal(req)
+		clonedReq := &AppendEntriesRequest{}
+		json.Unmarshal(b, clonedReq)
+
+		return target.AppendEntries(clonedReq)
+	}
+
+	var names []string
+
+	n := 5
+
+	// add n servers
+	for i := 1; i <= n; i++ {
+		names = append(names, strconv.Itoa(i))
+	}
+
+	var leader Server
+	count := 0
+
+	for _, name := range names {
+
+		syncFunc := func(s Server, now time.Time) {
+			mutex.Lock()
+			count++
+			mutex.Unlock()
+		}
+
+		s := newTestServer(name, transporter, time.Millisecond*500, syncFunc)
+
+		defer s.Stop()
+
+		mutex.Lock()
+		servers[name] = s
+		mutex.Unlock()
+
+		if name == "1" {
+			leader = s
+			s.SetHeartbeatTimeout(testHeartbeatTimeout)
+			s.Start()
+			time.Sleep(testHeartbeatTimeout)
+		} else {
+			s.SetElectionTimeout(testElectionTimeout)
+			s.SetHeartbeatTimeout(testHeartbeatTimeout)
+			s.Start()
+			time.Sleep(testHeartbeatTimeout)
+		}
+		if _, err := leader.Do(&DefaultJoinCommand{Name: name}); err != nil {
+			t.Fatalf("Unable to join server[%s]: %v", name, err)
+		}
+
+	}
+
+	time.Sleep(time.Second * 5)
+
+	secondCount := 2 * 5
+
+	if count > 6*secondCount || count < 5*secondCount {
+		t.Fatalf("sync number error [%v/%v]", 5*secondCount, count)
 	}
 
 }
