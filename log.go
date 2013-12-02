@@ -207,6 +207,7 @@ func (l *Log) close() {
 	defer l.mutex.Unlock()
 
 	if l.file != nil {
+		l.file.Sync()
 		l.file.Close()
 		l.file = nil
 	}
@@ -417,6 +418,7 @@ func (l *Log) flushCommitIndex() {
 	l.file.Seek(0, os.SEEK_SET)
 	fmt.Fprintf(l.file, "%8x\n", l.commitIndex)
 	l.file.Seek(0, os.SEEK_END)
+	l.file.Sync()
 }
 
 //--------------------------------------
