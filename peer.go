@@ -79,7 +79,7 @@ func (p *Peer) setPrevLogIndex(value uint64) {
 
 // Starts the peer heartbeat.
 func (p *Peer) startHeartbeat() {
-	p.stopChan = make(chan bool, 1)
+	p.stopChan = make(chan bool)
 	c := make(chan bool)
 	go p.heartbeat(c)
 	<-c
@@ -92,12 +92,7 @@ func (p *Peer) stopHeartbeat(flush bool) {
 	// when heartbeat returns
 	// I make the channel with 1 buffer
 	// and try to panic here
-	select {
-	case p.stopChan <- flush:
-
-	default:
-		panic("[" + p.server.Name() + "] cannot stop [" + p.Name + "] heartbeat")
-	}
+	p.stopChan <- flush
 }
 
 //--------------------------------------
@@ -227,7 +222,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 	// Attach the peer to resp, thus server can know where it comes from
 	resp.peer = p.Name
 	// Send response to server for processing.
-	p.server.send(resp)
+	p.server.sendAsync(resp)
 }
 
 // Sends an Snapshot request to the peer through the transport.
@@ -271,7 +266,7 @@ func (p *Peer) sendSnapshotRecoveryRequest() {
 		return
 	}
 	// Send response to server for processing.
-	p.server.send(&AppendEntriesResponse{Term: resp.Term, Success: resp.Success, append: (resp.Term == p.server.currentTerm)})
+	p.server.sendAsync(&AppendEntriesResponse{Term: resp.Term, Success: resp.Success, append: (resp.Term == p.server.currentTerm)})
 }
 
 //--------------------------------------

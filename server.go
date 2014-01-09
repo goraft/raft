@@ -117,11 +117,14 @@ type server struct {
 	leader     string
 	peers      map[string]*Peer
 	mutex      sync.RWMutex
+	stateMutex sync.RWMutex
 	syncedPeer map[string]bool
 
 	c                chan *ev
 	electionTimeout  time.Duration
 	heartbeatTimeout time.Duration
+
+	stopped chan bool
 
 	currentSnapshot         *Snapshot
 	lastSnapshot            *Snapshot
@@ -171,6 +174,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 		heartbeatTimeout:        DefaultHeartbeatTimeout,
 		maxLogEntriesPerRequest: MaxLogEntriesPerRequest,
 		connectionString:        connectionString,
+		stopped:                 make(chan bool),
 	}
 	s.eventDispatcher = newEventDispatcher(s)
 
@@ -261,15 +265,15 @@ func (s *server) LogPath() string {
 
 // Retrieves the current state of the server.
 func (s *server) State() string {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.stateMutex.RLock()
+	defer s.stateMutex.RUnlock()
 	return s.state
 }
 
 // Sets the state of the server.
 func (s *server) setState(state string) {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.stateMutex.Lock()
+	defer s.stateMutex.Unlock()
 
 	// Temporarily store previous values.
 	prevState := s.state
@@ -326,8 +330,8 @@ func (s *server) LastCommandName() string {
 
 // Get the state of the server for debugging
 func (s *server) GetState() string {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.stateMutex.RLock()
+	defer s.stateMutex.RUnlock()
 	return fmt.Sprintf("Name: %s, State: %s, Term: %v, CommitedIndex: %v ", s.name, s.state, s.currentTerm, s.log.commitIndex)
 }
 
@@ -463,8 +467,8 @@ func (s *server) Start() error {
 // Shuts down the server.
 func (s *server) Stop() {
 	s.send(&stopValue)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	// make sure the server has stopped before we close the log
+	<-s.stopped
 	s.log.close()
 }
 
@@ -553,9 +557,12 @@ func (s *server) loop() {
 			s.snapshotLoop()
 
 		case Stopped:
+			s.stopped <- true
 			return
 		}
 	}
+
+	s.stopped <- true
 }
 
 // Sends an event to the event loop to be processed. The function will wait
