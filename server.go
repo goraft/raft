@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -1329,7 +1330,7 @@ func (s *server) writeConf() {
 	confPath := path.Join(s.path, "conf")
 	tmpConfPath := path.Join(s.path, "conf.tmp")
 
-	err := ioutil.WriteFile(tmpConfPath, b, 0600)
+	err := writeFileSynced(tmpConfPath, b, 0600)
 
 	if err != nil {
 		panic(err)
@@ -1359,6 +1360,25 @@ func (s *server) readConf() error {
 	s.log.updateCommitIndex(conf.CommitIndex)
 
 	return nil
+}
+
+// WriteFile writes data to a file named by filename.
+// If the file does not exist, WriteFile creates it with permissions perm;
+// otherwise WriteFile truncates it before writing.
+// This is copied from ioutil.WriteFile with the addition of a Sync call to
+// ensure the data reaches the disk.
+func writeFileSynced(filename string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	n, err := f.Write(data)
+	f.Sync()
+	f.Close()
+	if err == nil && n < len(data) {
+		err = io.ErrShortWrite
+	}
+	return err
 }
 
 //--------------------------------------
