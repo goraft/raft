@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+
+	"github.com/goraft/raft/data"
 )
 
 // Parts from this transporter were heavily influenced by Peter Bougon's
@@ -174,7 +176,7 @@ func joinPath(connectionString, thePath string) string {
 }
 
 // Sends a SnapshotRequest RPC to a peer.
-func (t *HTTPTransporter) SendSnapshotRequest(server Server, peer *Peer, req *SnapshotRequest) *SnapshotResponse {
+func (t *HTTPTransporter) SendSnapshotRequest(server Server, peer *Peer, req *data.SnapshotRequest) *data.SnapshotResponse {
 	var b bytes.Buffer
 	if _, err := req.Encode(&b); err != nil {
 		traceln("transporter.rv.encoding.error:", err)
@@ -191,7 +193,7 @@ func (t *HTTPTransporter) SendSnapshotRequest(server Server, peer *Peer, req *Sn
 	}
 	defer httpResp.Body.Close()
 
-	resp := &SnapshotResponse{}
+	resp := &data.SnapshotResponse{}
 	if _, err = resp.Decode(httpResp.Body); err != nil && err != io.EOF {
 		traceln("transporter.rv.decoding.error:", err)
 		return nil
@@ -201,7 +203,7 @@ func (t *HTTPTransporter) SendSnapshotRequest(server Server, peer *Peer, req *Sn
 }
 
 // Sends a SnapshotRequest RPC to a peer.
-func (t *HTTPTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
+func (t *HTTPTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse {
 	var b bytes.Buffer
 	if _, err := req.Encode(&b); err != nil {
 		traceln("transporter.rv.encoding.error:", err)
@@ -218,7 +220,7 @@ func (t *HTTPTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer,
 	}
 	defer httpResp.Body.Close()
 
-	resp := &SnapshotRecoveryResponse{}
+	resp := &data.SnapshotRecoveryResponse{}
 	if _, err = resp.Decode(httpResp.Body); err != nil && err != io.EOF {
 		traceln("transporter.rv.decoding.error:", err)
 		return nil
@@ -274,7 +276,7 @@ func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceln(server.Name(), "RECV /snapshot")
 
-		req := &SnapshotRequest{}
+		req := &data.SnapshotRequest{}
 		if _, err := req.Decode(r.Body); err != nil {
 			http.Error(w, "", http.StatusBadRequest)
 			return
@@ -293,7 +295,7 @@ func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceln(server.Name(), "RECV /snapshotRecovery")
 
-		req := &SnapshotRecoveryRequest{}
+		req := &data.SnapshotRecoveryRequest{}
 		if _, err := req.Decode(r.Body); err != nil {
 			http.Error(w, "", http.StatusBadRequest)
 			return

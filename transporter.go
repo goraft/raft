@@ -1,5 +1,9 @@
 package raft
 
+import (
+	"github.com/goraft/raft/data"
+)
+
 //------------------------------------------------------------------------------
 //
 // Typedefs
@@ -11,6 +15,6 @@ package raft
 type Transporter interface {
 	SendVoteRequest(server Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse
 	SendAppendEntriesRequest(server Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse
-	SendSnapshotRequest(server Server, peer *Peer, req *SnapshotRequest) *SnapshotResponse
-	SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse
+	SendSnapshotRequest(server Server, peer *Peer, req *data.SnapshotRequest) *data.SnapshotResponse
+	SendSnapshotRecoveryRequest(server Server, peer *Peer, req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse
 }

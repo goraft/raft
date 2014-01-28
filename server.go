@@ -11,6 +11,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/goraft/raft/data"
 )
 
 //------------------------------------------------------------------------------
@@ -91,8 +93,8 @@ type Server interface {
 	SetTransporter(t Transporter)
 	AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 	RequestVote(req *RequestVoteRequest) *RequestVoteResponse
-	RequestSnapshot(req *SnapshotRequest) *SnapshotResponse
-	SnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse
+	RequestSnapshot(req *data.SnapshotRequest) *data.SnapshotResponse
+	SnapshotRecoveryRequest(req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse
 	AddPeer(name string, connectiongString string) error
 	RemovePeer(name string) error
 	Peers() map[string]*Peer
@@ -127,8 +129,8 @@ type server struct {
 	electionTimeout   time.Duration
 	heartbeatInterval time.Duration
 
-	currentSnapshot         *Snapshot
-	lastSnapshot            *Snapshot
+	currentSnapshot         *data.Snapshot
+	lastSnapshot            *data.Snapshot
 	stateMachine            StateMachine
 	maxLogEntriesPerRequest uint64
 
@@ -636,7 +638,7 @@ func (s *server) followerLoop() {
 					e.returnValue, update = s.processAppendEntriesRequest(req)
 				case *RequestVoteRequest:
 					e.returnValue, update = s.processRequestVoteRequest(req)
-				case *SnapshotRequest:
+				case *data.SnapshotRequest:
 					e.returnValue = s.processSnapshotRequest(req)
 				default:
 					err = NotLeaderError
@@ -818,7 +820,7 @@ func (s *server) snapshotLoop() {
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *RequestVoteRequest:
 				e.returnValue, _ = s.processRequestVoteRequest(req)
-			case *SnapshotRecoveryRequest:
+			case *data.SnapshotRecoveryRequest:
 				e.returnValue = s.processSnapshotRecoveryRequest(req)
 			}
 		}
@@ -1096,14 +1098,18 @@ func (s *server) TakeSnapshot() error {
 	}
 
 	// Clone the list of peers.
-	peers := make([]*Peer, 0, len(s.peers)+1)
+	peerNames := make([]string, 0, len(s.peers)+1)
+	peerConns := make([]string, 0, len(s.peers)+1)
+	i := 0
 	for _, peer := range s.peers {
-		peers = append(peers, peer.clone())
+		peerNames[i] = peer.Name
+		peerConns[i] = peer.ConnectionString
 	}
-	peers = append(peers, &Peer{Name: s.Name(), ConnectionString: s.connectionString})
+	peerNames = append(peerNames, s.name)
+	peerConns = append(peerConns, s.connectionString)
 
 	// Attach current snapshot and save it to disk.
-	s.currentSnapshot = &Snapshot{lastIndex, lastTerm, peers, state, path}
+	s.currentSnapshot = &data.Snapshot{lastIndex, lastTerm, peerNames, peerConns, state, path}
 	s.saveSnapshot()
 
 	// We keep some log entries after the snapshot.
@@ -1124,7 +1130,7 @@ func (s *server) saveSnapshot() error {
 	}
 
 	// Write snapshot to disk.
-	if err := s.currentSnapshot.save(); err != nil {
+	if err := s.currentSnapshot.Save(); err != nil {
 		return err
 	}
 
@@ -1134,7 +1140,7 @@ func (s *server) saveSnapshot() error {
 
 	// Delete the previous snapshot if there is any change
 	if tmp != nil && !(tmp.LastIndex == s.lastSnapshot.LastIndex && tmp.LastTerm == s.lastSnapshot.LastTerm) {
-		tmp.remove()
+		tmp.Remove()
 	}
 	s.currentSnapshot = nil
 
@@ -1146,44 +1152,44 @@ func (s *server) SnapshotPath(lastIndex uint64, lastTerm uint64) string {
 	return path.Join(s.path, "snapshot", fmt.Sprintf("%v_%v.ss", lastTerm, lastIndex))
 }
 
-func (s *server) RequestSnapshot(req *SnapshotRequest) *SnapshotResponse {
+func (s *server) RequestSnapshot(req *data.SnapshotRequest) *data.SnapshotResponse {
 	ret, _ := s.send(req)
-	resp, _ := ret.(*SnapshotResponse)
+	resp, _ := ret.(*data.SnapshotResponse)
 	return resp
 }
 
-func (s *server) processSnapshotRequest(req *SnapshotRequest) *SnapshotResponse {
+func (s *server) processSnapshotRequest(req *data.SnapshotRequest) *data.SnapshotResponse {
 	// If the follower’s log contains an entry at the snapshot’s last index with a term
 	// that matches the snapshot’s last term, then the follower already has all the
 	// information found in the snapshot and can reply false.
 	entry := s.log.getEntry(req.LastIndex)
 
 	if entry != nil && entry.Term() == req.LastTerm {
-		return newSnapshotResponse(false)
+		return data.NewSnapshotResponse(false)
 	}
 
 	// Update state.
 	s.setState(Snapshotting)
 
-	return newSnapshotResponse(true)
+	return data.NewSnapshotResponse(true)
 }
 
-func (s *server) SnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
+func (s *server) SnapshotRecoveryRequest(req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse {
 	ret, _ := s.send(req)
-	resp, _ := ret.(*SnapshotRecoveryResponse)
+	resp, _ := ret.(*data.SnapshotRecoveryResponse)
 	return resp
 }
 
-func (s *server) processSnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
+func (s *server) processSnapshotRecoveryRequest(req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse {
 	// Recover state sent from request.
 	if err := s.stateMachine.Recovery(req.State); err != nil {
-		return newSnapshotRecoveryResponse(req.LastTerm, false, req.LastIndex)
+		return data.NewSnapshotRecoveryResponse(req.LastTerm, false, req.LastIndex)
 	}
 
 	// Recover the cluster configuration.
 	s.peers = make(map[string]*Peer)
-	for _, peer := range req.Peers {
-		s.AddPeer(peer.Name, peer.ConnectionString)
+	for i := range req.PeerNames {
+		s.AddPeer(req.PeerNames[i], req.PeerConns[i])
 	}
 
 	// Update log state.
@@ -1191,13 +1197,14 @@ func (s *server) processSnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *S
 	s.log.updateCommitIndex(req.LastIndex)
 
 	// Create local snapshot.
-	s.currentSnapshot = &Snapshot{req.LastIndex, req.LastTerm, req.Peers, req.State, s.SnapshotPath(req.LastIndex, req.LastTerm)}
+	s.currentSnapshot = &data.Snapshot{req.LastIndex, req.LastTerm, req.PeerNames,
+		req.PeerConns, req.State, s.SnapshotPath(req.LastIndex, req.LastTerm)}
 	s.saveSnapshot()
 
 	// Clear the previous log entries.
 	s.log.compact(req.LastIndex, req.LastTerm)
 
-	return newSnapshotRecoveryResponse(req.LastTerm, true, req.LastIndex)
+	return data.NewSnapshotRecoveryResponse(req.LastTerm, true, req.LastIndex)
 
 }
 
@@ -1267,8 +1274,8 @@ func (s *server) LoadSnapshot() error {
 	}
 
 	// Recover cluster configuration.
-	for _, peer := range s.lastSnapshot.Peers {
-		s.AddPeer(peer.Name, peer.ConnectionString)
+	for i := range s.lastSnapshot.PeerNames {
+		s.AddPeer(s.lastSnapshot.PeerNames[i], s.lastSnapshot.PeerConns[i])
 	}
 
 	// Update log state.

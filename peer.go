@@ -3,6 +3,8 @@ package raft
 import (
 	"sync"
 	"time"
+
+	"github.com/goraft/raft/data"
 )
 
 //------------------------------------------------------------------------------
@@ -153,7 +155,7 @@ func (p *Peer) flush() {
 	if entries != nil {
 		p.sendAppendEntriesRequest(newAppendEntriesRequest(term, prevLogIndex, prevLogTerm, p.server.log.CommitIndex(), p.server.name, entries))
 	} else {
-		p.sendSnapshotRequest(newSnapshotRequest(p.server.name, p.server.lastSnapshot))
+		p.sendSnapshotRequest(data.NewSnapshotRequest(p.server.name, p.server.lastSnapshot))
 	}
 }
 
@@ -230,7 +232,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 }
 
 // Sends an Snapshot request to the peer through the transport.
-func (p *Peer) sendSnapshotRequest(req *SnapshotRequest) {
+func (p *Peer) sendSnapshotRequest(req *data.SnapshotRequest) {
 	debugln("peer.snap.send: ", p.Name)
 
 	resp := p.server.Transporter().SendSnapshotRequest(p.server, p, req)
@@ -254,7 +256,7 @@ func (p *Peer) sendSnapshotRequest(req *SnapshotRequest) {
 
 // Sends an Snapshot Recovery request to the peer through the transport.
 func (p *Peer) sendSnapshotRecoveryRequest() {
-	req := newSnapshotRecoveryRequest(p.server.name, p.server.lastSnapshot)
+	req := data.NewSnapshotRecoveryRequest(p.server.name, p.server.lastSnapshot)
 	debugln("peer.snap.recovery.send: ", p.Name)
 	resp := p.server.Transporter().SendSnapshotRecoveryRequest(p.server, p, req)
 

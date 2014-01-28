@@ -1,4 +1,4 @@
-package raft
+package data
 
 import (
 	"io"
@@ -16,7 +16,7 @@ type SnapshotRequest struct {
 }
 
 // Creates a new Snapshot request.
-func newSnapshotRequest(leaderName string, snapshot *Snapshot) *SnapshotRequest {
+func NewSnapshotRequest(leaderName string, snapshot *Snapshot) *SnapshotRequest {
 	return &SnapshotRequest{
 		LeaderName: leaderName,
 		LastIndex:  snapshot.LastIndex,
