@@ -133,6 +133,9 @@ type server struct {
 	maxLogEntriesPerRequest uint64
 
 	connectionString string
+
+	// bookkeeping for external access
+	commitIndex uint64
 }
 
 // An internal event to be processed by the server's event loop.
@@ -305,9 +308,7 @@ func (s *server) Term() uint64 {
 
 // Retrieves the current commit index of the server.
 func (s *server) CommitIndex() uint64 {
-	s.log.mutex.RLock()
-	defer s.log.mutex.RUnlock()
-	return s.log.commitIndex
+	return s.commitIndex
 }
 
 // Retrieves the name of the candidate this server voted for in this term.
@@ -444,6 +445,7 @@ func (s *server) Start() error {
 
 	// Update the term to the last term in the log.
 	_, s.currentTerm = s.log.lastInfo()
+	s.commitIndex = s.log.commitIndex
 
 	s.setState(Follower)
 
@@ -865,9 +867,9 @@ func (s *server) processCommand(command Command, e *ev) {
 
 	s.syncedPeer[s.Name()] = true
 	if len(s.peers) == 0 {
-		commitIndex := s.log.currentIndex()
-		s.log.setCommitIndex(commitIndex)
-		s.debugln("commit index ", commitIndex)
+		s.commitIndex = s.log.currentIndex()
+		s.log.setCommitIndex(s.commitIndex)
+		s.debugln("commit index ", s.commitIndex)
 	}
 }
 
@@ -906,6 +908,7 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
+	s.commitIndex = req.CommitIndex
 	// Commit up to the commit index.
 	if err := s.log.setCommitIndex(req.CommitIndex); err != nil {
 		s.debugln("server.ae.commit.error: ", err)
@@ -973,7 +976,6 @@ func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
 			debugln("peer.append.resp.decrement: ", p.Name, "; idx =", p.prevLogIndex)
 		}
 	}
-	p.proceed <- true
 
 	// Increment the commit count to make sure we have a quorum before committing.
 	if len(s.syncedPeer) < s.QuorumSize() {
@@ -989,14 +991,14 @@ func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
 	sort.Sort(sort.Reverse(uint64Slice(indices)))
 
 	// We can commit up to the index which the majority of the members have appended.
-	commitIndex := indices[s.QuorumSize()-1]
+	s.commitIndex = indices[s.QuorumSize()-1]
 	committedIndex := s.log.commitIndex
 
-	if commitIndex > committedIndex {
+	if s.commitIndex > committedIndex {
 		// leader needs to do a fsync before committing log entries
 		s.log.sync()
-		s.log.setCommitIndex(commitIndex)
-		s.debugln("commit index ", commitIndex)
+		s.log.setCommitIndex(s.commitIndex)
+		s.debugln("commit index ", s.commitIndex)
 	}
 }
 
@@ -1255,6 +1257,7 @@ func (s *server) processSnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *S
 
 	// Update log state.
 	s.currentTerm = req.LastTerm
+	s.commitIndex = req.LastIndex
 	s.log.updateCommitIndex(req.LastIndex)
 
 	// Create local snapshot.
@@ -1342,6 +1345,7 @@ func (s *server) LoadSnapshot() error {
 	s.log.startTerm = s.lastSnapshot.LastTerm
 	s.log.startIndex = s.lastSnapshot.LastIndex
 	s.log.updateCommitIndex(s.lastSnapshot.LastIndex)
+	s.commitIndex = s.lastSnapshot.LastIndex
 
 	return err
 }

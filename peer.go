@@ -113,9 +113,13 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 	tracef("peer.append.send: %s->%s [prevLog:%v length: %v]\n",
 		p.server.Name(), p.Name, req.PrevLogIndex, len(req.Entries))
 
+	defer func() {
+		p.proceed <- true
+	}()
+
 	resp := p.server.Transporter().SendAppendEntriesRequest(p.server, p, req)
 	if resp == nil {
-		p.proceed <- true
+
 		p.server.DispatchEvent(newEvent(HeartbeatIntervalEventType, p, nil))
 		debugln("peer.append.timeout: ", p.server.Name(), "->", p.Name)
 		return
