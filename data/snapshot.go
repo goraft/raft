@@ -1,4 +1,4 @@
-package raft
+package data
 
 import (
 	"encoding/json"
@@ -13,13 +13,14 @@ type Snapshot struct {
 	LastTerm  uint64 `json:"lastTerm"`
 
 	// Cluster configuration.
-	Peers []*Peer `json:"peers"`
-	State []byte  `json:"state"`
-	Path  string  `json:"path"`
+	PeerNames []string `json:"peerNames"`
+	PeerConns []string `json:"peerConns"`
+	State     []byte   `json:"state"`
+	Path      string   `json:"path"`
 }
 
 // save writes the snapshot to file.
-func (ss *Snapshot) save() error {
+func (ss *Snapshot) Save() error {
 	// Open the file for writing.
 	file, err := os.OpenFile(ss.Path, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
@@ -53,7 +54,7 @@ func (ss *Snapshot) save() error {
 }
 
 // remove deletes the snapshot file.
-func (ss *Snapshot) remove() error {
+func (ss *Snapshot) Remove() error {
 	if err := os.Remove(ss.Path); err != nil {
 		return err
 	}

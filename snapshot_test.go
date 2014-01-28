@@ -3,6 +3,7 @@ package raft
 import (
 	"testing"
 
+	"github.com/goraft/raft/data"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -40,16 +41,17 @@ func TestSnapshotRequest(t *testing.T) {
 		m.On("Recovery", []byte("bar")).Return(nil)
 
 		// Send snapshot request.
-		resp := s.RequestSnapshot(&SnapshotRequest{LastIndex: 5, LastTerm: 1})
+		resp := s.RequestSnapshot(&data.SnapshotRequest{LastIndex: 5, LastTerm: 1})
 		assert.Equal(t, resp.Success, true)
 		assert.Equal(t, s.State(), Snapshotting)
 
 		// Send recovery request.
-		resp2 := s.SnapshotRecoveryRequest(&SnapshotRecoveryRequest{
+		resp2 := s.SnapshotRecoveryRequest(&data.SnapshotRecoveryRequest{
 			LeaderName: "1",
 			LastIndex:  5,
 			LastTerm:   2,
-			Peers:      make([]*Peer, 0),
+			PeerNames:  make([]string, 0),
+			PeerConns:  make([]string, 0),
 			State:      []byte("bar"),
 		})
 		assert.Equal(t, resp2.Success, true)

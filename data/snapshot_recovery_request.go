@@ -1,4 +1,4 @@
-package raft
+package data
 
 import (
 	"io"
@@ -13,17 +13,19 @@ type SnapshotRecoveryRequest struct {
 	LeaderName string
 	LastIndex  uint64
 	LastTerm   uint64
-	Peers      []*Peer
+	PeerNames  []string
+	PeerConns  []string
 	State      []byte
 }
 
 // Creates a new Snapshot request.
-func newSnapshotRecoveryRequest(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequest {
+func NewSnapshotRecoveryRequest(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequest {
 	return &SnapshotRecoveryRequest{
 		LeaderName: leaderName,
 		LastIndex:  snapshot.LastIndex,
 		LastTerm:   snapshot.LastTerm,
-		Peers:      snapshot.Peers,
+		PeerNames:  snapshot.PeerNames,
+		PeerConns:  snapshot.PeerConns,
 		State:      snapshot.State,
 	}
 }
@@ -32,12 +34,12 @@ func newSnapshotRecoveryRequest(leaderName string, snapshot *Snapshot) *Snapshot
 // written and any error that may have occurred.
 func (req *SnapshotRecoveryRequest) Encode(w io.Writer) (int, error) {
 
-	protoPeers := make([]*protobuf.SnapshotRecoveryRequest_Peer, len(req.Peers))
+	protoPeers := make([]*protobuf.SnapshotRecoveryRequest_Peer, len(req.PeerNames))
 
-	for i, peer := range req.Peers {
+	for i := range protoPeers {
 		protoPeers[i] = &protobuf.SnapshotRecoveryRequest_Peer{
-			Name:             proto.String(peer.Name),
-			ConnectionString: proto.String(peer.ConnectionString),
+			Name:             proto.String(req.PeerNames[i]),
+			ConnectionString: proto.String(req.PeerConns[i]),
 		}
 	}
 
@@ -77,13 +79,12 @@ func (req *SnapshotRecoveryRequest) Decode(r io.Reader) (int, error) {
 	req.LastTerm = pb.GetLastTerm()
 	req.State = pb.GetState()
 
-	req.Peers = make([]*Peer, len(pb.Peers))
+	req.PeerNames = make([]string, len(pb.Peers))
+	req.PeerConns = make([]string, len(pb.Peers))
 
 	for i, peer := range pb.Peers {
-		req.Peers[i] = &Peer{
-			Name:             peer.GetName(),
-			ConnectionString: peer.GetConnectionString(),
-		}
+		req.PeerNames[i] = peer.GetName()
+		req.PeerConns[i] = peer.GetConnectionString()
 	}
 
 	return totalBytes, nil

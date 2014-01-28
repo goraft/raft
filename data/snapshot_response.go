@@ -1,4 +1,4 @@
-package raft
+package data
 
 import (
 	"io"
@@ -14,7 +14,7 @@ type SnapshotResponse struct {
 }
 
 // Creates a new Snapshot response.
-func newSnapshotResponse(success bool) *SnapshotResponse {
+func NewSnapshotResponse(success bool) *SnapshotResponse {
 	return &SnapshotResponse{
 		Success: success,
 	}

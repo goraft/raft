@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 	"time"
+
+	"github.com/goraft/raft/data"
 )
 
 const (
@@ -131,7 +133,7 @@ func newTestCluster(names []string, transporter Transporter, lookup map[string]S
 type testTransporter struct {
 	sendVoteRequestFunc          func(server Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse
 	sendAppendEntriesRequestFunc func(server Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse
-	sendSnapshotRequestFunc      func(server Server, peer *Peer, req *SnapshotRequest) *SnapshotResponse
+	sendSnapshotRequestFunc      func(server Server, peer *Peer, req *data.SnapshotRequest) *data.SnapshotResponse
 }
 
 func (t *testTransporter) SendVoteRequest(server Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
@@ -142,11 +144,11 @@ func (t *testTransporter) SendAppendEntriesRequest(server Server, peer *Peer, re
 	return t.sendAppendEntriesRequestFunc(server, peer, req)
 }
 
-func (t *testTransporter) SendSnapshotRequest(server Server, peer *Peer, req *SnapshotRequest) *SnapshotResponse {
+func (t *testTransporter) SendSnapshotRequest(server Server, peer *Peer, req *data.SnapshotRequest) *data.SnapshotResponse {
 	return t.sendSnapshotRequestFunc(server, peer, req)
 }
 
-func (t *testTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
+func (t *testTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *data.SnapshotRecoveryRequest) *data.SnapshotRecoveryResponse {
 	return t.SendSnapshotRecoveryRequest(server, peer, req)
 }
 
