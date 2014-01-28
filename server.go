@@ -422,6 +422,7 @@ func init() {
 // immediately become leader and commit entry.
 
 func (s *server) Start() error {
+	debugln("start.server.", s.name)
 	// Exit if the server is already running.
 	if s.State() != Stopped {
 		return errors.New("raft.Server: Server already running")
@@ -498,12 +499,10 @@ func (s *server) setCurrentTerm(term uint64, leaderName string, append bool) {
 	prevLeader := s.leader
 
 	if term > s.currentTerm {
-		// stop heartbeats before step-down
 		if s.state == Leader {
-			for _, peer := range s.peers {
-				peer.stopHeartbeat(false)
-			}
+			s.stopHeartbeat()
 		}
+
 		// update the term and clear vote for
 		s.state = Follower
 		s.currentTerm = term
@@ -566,7 +565,9 @@ func (s *server) loop() {
 			s.snapshotLoop()
 
 		case Stopped:
+			s.debugln("send.stopped.")
 			s.stopped <- true
+			s.debugln("stopped.")
 			return
 		}
 	}
@@ -615,32 +616,34 @@ func (s *server) followerLoop() {
 		case e := <-s.c:
 			if e.target == &stopValue {
 				s.setState(Stopped)
-			} else {
-				switch req := e.target.(type) {
-				case JoinCommand:
-					//If no log entries exist and a self-join command is issued
-					//then immediately become leader and commit entry.
-					if s.log.currentIndex() == 0 && req.NodeName() == s.Name() {
-						s.debugln("selfjoin and promote to leader")
-						s.setState(Leader)
-						s.processCommand(req, e)
-					} else {
-						err = NotLeaderError
-					}
-				case *AppendEntriesRequest:
-					// If heartbeats get too close to the election timeout then send an event.
-					elapsedTime := time.Now().Sub(since)
-					if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
-						s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
-					}
-					e.returnValue, update = s.processAppendEntriesRequest(req)
-				case *RequestVoteRequest:
-					e.returnValue, update = s.processRequestVoteRequest(req)
-				case *SnapshotRequest:
-					e.returnValue = s.processSnapshotRequest(req)
-				default:
+				e.c <- nil
+				return
+			}
+
+			switch req := e.target.(type) {
+			case JoinCommand:
+				//If no log entries exist and a self-join command is issued
+				//then immediately become leader and commit entry.
+				if s.log.currentIndex() == 0 && req.NodeName() == s.Name() {
+					s.debugln("selfjoin and promote to leader")
+					s.setState(Leader)
+					s.processCommand(req, e)
+				} else {
 					err = NotLeaderError
 				}
+			case *AppendEntriesRequest:
+				// If heartbeats get too close to the election timeout then send an event.
+				elapsedTime := time.Now().Sub(since)
+				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
+					s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
+				}
+				e.returnValue, update = s.processAppendEntriesRequest(req)
+			case *RequestVoteRequest:
+				e.returnValue, update = s.processRequestVoteRequest(req)
+			case *SnapshotRequest:
+				e.returnValue = s.processSnapshotRequest(req)
+			default:
+				err = NotLeaderError
 			}
 
 			// Callback to event.
@@ -722,16 +725,18 @@ func (s *server) candidateLoop() {
 				var err error
 				if e.target == &stopValue {
 					s.setState(Stopped)
-				} else {
-					switch req := e.target.(type) {
-					case Command:
-						err = NotLeaderError
-					case *AppendEntriesRequest:
-						e.returnValue, _ = s.processAppendEntriesRequest(req)
-					case *RequestVoteRequest:
-						e.returnValue, _ = s.processRequestVoteRequest(req)
-					}
+					e.c <- nil
 				}
+
+				switch req := e.target.(type) {
+				case *AppendEntriesRequest:
+					e.returnValue, _ = s.processAppendEntriesRequest(req)
+				case *RequestVoteRequest:
+					e.returnValue, _ = s.processRequestVoteRequest(req)
+				default:
+					err = NotLeaderError
+				}
+
 				// Callback to event.
 				e.c <- err
 
@@ -755,10 +760,10 @@ func (s *server) leaderLoop() {
 	logIndex, _ := s.log.lastInfo()
 
 	// Update the peers prevLogIndex to leader's lastLogIndex and start heartbeat.
-	s.debugln("leaderLoop.set.PrevIndex to ", logIndex)
 	for _, peer := range s.peers {
+		s.debugln("leaderLoop.set.PrevIndex to ", logIndex, " ", peer.Name)
 		peer.setPrevLogIndex(logIndex)
-		peer.startHeartbeat()
+		peer.proceed <- true
 	}
 
 	// Commit a NOP after the server becomes leader. From the Raft paper:
@@ -767,33 +772,34 @@ func (s *server) leaderLoop() {
 	// (§5.2)". The heartbeats started above do the "idle" period work.
 	go s.Do(NOPCommand{})
 
+	ticker := time.Tick(s.heartbeatInterval)
 	// Begin to collect response from followers
 	for s.State() == Leader {
 		var err error
 		select {
 		case e := <-s.c:
 			if e.target == &stopValue {
-				// Stop all peers before stop
-				for _, peer := range s.peers {
-					peer.stopHeartbeat(false)
-				}
 				s.setState(Stopped)
-			} else {
-				switch req := e.target.(type) {
-				case Command:
-					s.processCommand(req, e)
-					continue
-				case *AppendEntriesRequest:
-					e.returnValue, _ = s.processAppendEntriesRequest(req)
-				case *AppendEntriesResponse:
-					s.processAppendEntriesResponse(req)
-				case *RequestVoteRequest:
-					e.returnValue, _ = s.processRequestVoteRequest(req)
-				}
+				e.c <- nil
+				return
+			}
+
+			switch req := e.target.(type) {
+			case Command:
+				s.processCommand(req, e)
+				continue
+			case *AppendEntriesRequest:
+				e.returnValue, _ = s.processAppendEntriesRequest(req)
+			case *AppendEntriesResponse:
+				s.processAppendEntriesResponse(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = s.processRequestVoteRequest(req)
 			}
 
 			// Callback to event.
 			e.c <- err
+		case <-ticker:
+			s.heartbeat()
 		}
 	}
 
@@ -915,22 +921,59 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 // processed when the server is a leader. Responses received during other
 // states are dropped.
 func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
+	s.debugln("server.process.append.entries.resp")
+	if s.state != Leader {
+		msg := "process append resp: Non-leader state should not call process append resp " + s.state
+		panic(msg)
+	}
+
+	p := s.peers[resp.peer]
+
 	// If we find a higher term then change to a follower and exit.
 	if resp.Term() > s.Term() {
 		s.setCurrentTerm(resp.Term(), "", false)
 		return
 	}
 
-	// panic response if it's not successful.
-	if !resp.Success() {
-		return
-	}
+	if resp.Success() {
+		if resp.Index() > p.prevLogIndex {
+			p.prevLogIndex = resp.Index()
 
-	// if one peer successfully append a log from the leader term,
-	// we add it to the synced list
-	if resp.append == true {
-		s.syncedPeer[resp.peer] = true
+			// if peer append a log entry from the current term
+			// we add it to synced peer map
+			if resp.Term() == s.currentTerm {
+				s.syncedPeer[resp.peer] = true
+			}
+		}
+		traceln("peer.append.resp.success: ", p.Name, "; idx =", p.prevLogIndex)
+		// If it was unsuccessful then decrement the previous log index and
+		// we'll try again next time.
+	} else {
+		if resp.Term() == s.currentTerm && resp.CommitIndex() >= p.prevLogIndex {
+			// we may miss a response from peer
+			// so maybe the peer has committed the logs we just sent
+			// but we did not receive the successful reply and did not increase
+			// the prevLogIndex
+
+			// peer failed to truncate the log and sent a fail reply at this time
+			// we just need to update peer's prevLog index to commitIndex
+
+			p.prevLogIndex = resp.CommitIndex()
+			debugln("peer.append.resp.update: ", p.Name, "; idx =", p.prevLogIndex)
+		} else if p.prevLogIndex > 0 {
+			// Decrement the previous log index down until we find a match. Don't
+			// let it go below where the peer's commit index is though. That's a
+			// problem.
+			p.prevLogIndex--
+			// if it not enough, we directly decrease to the index of the
+			if p.prevLogIndex > resp.Index() {
+				p.prevLogIndex = resp.Index()
+			}
+
+			debugln("peer.append.resp.decrement: ", p.Name, "; idx =", p.prevLogIndex)
+		}
 	}
+	p.proceed <- true
 
 	// Increment the commit count to make sure we have a quorum before committing.
 	if len(s.syncedPeer) < s.QuorumSize() {
@@ -1020,12 +1063,11 @@ func (s *server) AddPeer(name string, connectiongString string) error {
 	// Skip the Peer if it has the same name as the Server
 	if s.name != name {
 		peer := newPeer(s, name, connectiongString, s.heartbeatInterval)
-
-		if s.State() == Leader {
-			peer.startHeartbeat()
-		}
-
 		s.peers[peer.Name] = peer
+
+		if s.state == Leader {
+			peer.proceed <- true
+		}
 
 		s.DispatchEvent(newEvent(AddPeerEventType, name, nil))
 	}
@@ -1048,11 +1090,6 @@ func (s *server) RemovePeer(name string) error {
 			return fmt.Errorf("raft: Peer not found: %s", name)
 		}
 
-		// Stop peer and remove it.
-		if s.State() == Leader {
-			peer.stopHeartbeat(true)
-		}
-
 		delete(s.peers, name)
 
 		s.DispatchEvent(newEvent(RemovePeerEventType, name, nil))
@@ -1062,6 +1099,36 @@ func (s *server) RemovePeer(name string) error {
 	s.writeConf()
 
 	return nil
+}
+
+//--------------------------------------
+// Heartbeat
+//--------------------------------------
+func (s *server) heartbeat() {
+	commitIndex, term := s.log.CommitIndex(), s.Term()
+	for _, p := range s.peers {
+		select {
+		case <-p.proceed:
+			debugln("peer.heartbeat:", p.Name)
+		default:
+			warnln("miss.heartbeat", p.Name)
+			continue
+		}
+		prevIndex := p.getPrevLogIndex()
+		entries, prevTerm := s.log.getEntriesAfter(prevIndex, s.maxLogEntriesPerRequest)
+
+		go p.flush(entries, prevTerm, term, prevIndex, commitIndex)
+	}
+}
+
+func (s *server) stopHeartbeat() {
+	if s.state != Leader {
+		panic("stop.hertbeat.not.leader")
+	}
+
+	for _, p := range s.peers {
+		<-p.proceed
+	}
 }
 
 //--------------------------------------
