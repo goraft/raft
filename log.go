@@ -146,7 +146,7 @@ func (l *Log) open(path string) error {
 	// Read the file and decode entries.
 	for {
 		// Instantiate log entry and decode into it.
-		entry, _ := newLogEntry(l, nil, 0, 0, nil)
+		entry := newEmptyLogEntry(l)
 		entry.Position, _ = l.file.Seek(0, os.SEEK_CUR)
 
 		n, err := entry.decode(l.file)
@@ -198,8 +198,8 @@ func (l *Log) sync() error {
 //--------------------------------------
 
 // Creates a log entry associated with this log.
-func (l *Log) createEntry(term uint64, command Command, e *ev) (*LogEntry, error) {
-	return newLogEntry(l, e, l.nextIndex(), term, command)
+func (l *Log) createEntry(term uint64, e *commandEvent) (*LogEntry, error) {
+	return newLogEntry(l, e, l.nextIndex(), term)
 }
 
 // Retrieves an entry from the log. If the entry has been eliminated because
@@ -338,12 +338,12 @@ func (l *Log) setCommitIndex(index uint64) error {
 		}
 
 		// Apply the changes to the state machine and store the error code.
-		returnValue, err := l.ApplyFunc(command)
+		result, err := l.ApplyFunc(command)
 
 		debugf("setCommitIndex.set.result index: %v, entries index: %v", i, entryIndex)
 		if entry.event != nil {
-			entry.event.returnValue = returnValue
-			entry.event.c <- err
+			entry.event.err = err
+			entry.event.result <- result
 		}
 	}
 	return nil
@@ -387,7 +387,8 @@ func (l *Log) truncate(index uint64, term uint64) error {
 		// notify clients if this node is the previous leader
 		for _, entry := range l.entries {
 			if entry.event != nil {
-				entry.event.c <- errors.New("command failed to be committed due to node failure")
+				entry.event.err = errors.New("command failed to be committed due to node failure")
+				entry.event.result <- nil
 			}
 		}
 
@@ -411,7 +412,8 @@ func (l *Log) truncate(index uint64, term uint64) error {
 			for i := index - l.startIndex; i < uint64(len(l.entries)); i++ {
 				entry := l.entries[i]
 				if entry.event != nil {
-					entry.event.c <- errors.New("command failed to be committed due to node failure")
+					entry.event.err = errors.New("command failed to be committed due to node failure")
+					entry.event.result <- nil
 				}
 			}
 

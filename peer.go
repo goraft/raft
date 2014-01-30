@@ -96,9 +96,10 @@ func (p *Peer) flush(entries []*LogEntry, prevTerm, term, prevIndex, commitIndex
 
 	if entries != nil {
 		p.sendAppendEntriesRequest(newAppendEntriesRequest(term, prevIndex, prevTerm, p.server.log.CommitIndex(), p.server.name, entries))
-	} else {
-		p.sendSnapshotRequest(newSnapshotRequest(p.server.name, p.server.lastSnapshot))
 	}
+	// } else {
+	// 	p.sendSnapshotRequest(newSnapshotRequest(p.server.name, p.server.lastSnapshot))
+	// }
 
 	duration := time.Now().Sub(start)
 	p.server.DispatchEvent(newEvent(HeartbeatEventType, duration, nil))
@@ -113,13 +114,9 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 	tracef("peer.append.send: %s->%s [prevLog:%v length: %v]\n",
 		p.server.Name(), p.Name, req.PrevLogIndex, len(req.Entries))
 
-	defer func() {
-		p.proceed <- true
-	}()
-
 	resp := p.server.Transporter().SendAppendEntriesRequest(p.server, p, req)
 	if resp == nil {
-
+		p.proceed <- true
 		p.server.DispatchEvent(newEvent(HeartbeatIntervalEventType, p, nil))
 		debugln("peer.append.timeout: ", p.server.Name(), "->", p.Name)
 		return
@@ -128,66 +125,67 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 
 	// Attach the peer to resp, thus server can know where it comes from
 	resp.peer = p.Name
+
 	// Send response to server for processing.
-	p.server.sendAsync(resp)
+	p.server.channels.sendAppendResponse(resp)
 }
 
 // Sends an Snapshot request to the peer through the transport.
-func (p *Peer) sendSnapshotRequest(req *SnapshotRequest) {
-	debugln("peer.snap.send: ", p.Name)
+// func (p *Peer) sendSnapshotRequest(req *SnapshotRequest) {
+// 	debugln("peer.snap.send: ", p.Name)
 
-	resp := p.server.Transporter().SendSnapshotRequest(p.server, p, req)
-	if resp == nil {
-		debugln("peer.snap.timeout: ", p.Name)
-		return
-	}
+// 	resp := p.server.Transporter().SendSnapshotRequest(p.server, p, req)
+// 	if resp == nil {
+// 		debugln("peer.snap.timeout: ", p.Name)
+// 		return
+// 	}
 
-	debugln("peer.snap.recv: ", p.Name)
+// 	debugln("peer.snap.recv: ", p.Name)
 
-	// If successful, the peer should have been to snapshot state
-	// Send it the snapshot!
-	if resp.Success {
-		p.sendSnapshotRecoveryRequest()
-	} else {
-		debugln("peer.snap.failed: ", p.Name)
-		return
-	}
+// 	// If successful, the peer should have been to snapshot state
+// 	// Send it the snapshot!
+// 	if resp.Success {
+// 		p.sendSnapshotRecoveryRequest()
+// 	} else {
+// 		debugln("peer.snap.failed: ", p.Name)
+// 		return
+// 	}
 
-}
+// }
 
 // Sends an Snapshot Recovery request to the peer through the transport.
-func (p *Peer) sendSnapshotRecoveryRequest() {
-	req := newSnapshotRecoveryRequest(p.server.name, p.server.lastSnapshot)
-	debugln("peer.snap.recovery.send: ", p.Name)
-	resp := p.server.Transporter().SendSnapshotRecoveryRequest(p.server, p, req)
+// func (p *Peer) sendSnapshotRecoveryRequest() {
+// 	req := newSnapshotRecoveryRequest(p.server.name, p.server.lastSnapshot)
+// 	debugln("peer.snap.recovery.send: ", p.Name)
+// 	resp := p.server.Transporter().SendSnapshotRecoveryRequest(p.server, p, req)
 
-	if resp == nil {
-		debugln("peer.snap.recovery.timeout: ", p.Name)
-		return
-	}
+// 	if resp == nil {
+// 		debugln("peer.snap.recovery.timeout: ", p.Name)
+// 		return
+// 	}
 
-	if resp.Success {
-		p.prevLogIndex = req.LastIndex
-	} else {
-		debugln("peer.snap.recovery.failed: ", p.Name)
-		return
-	}
+// 	if resp.Success {
+// 		p.prevLogIndex = req.LastIndex
+// 	} else {
+// 		debugln("peer.snap.recovery.failed: ", p.Name)
+// 		return
+// 	}
 
-	p.server.sendAsync(resp)
-}
+// 	p.server.sendAsync(resp)
+// }
 
 //--------------------------------------
 // Vote Requests
 //--------------------------------------
 
 // send VoteRequest Request
-func (p *Peer) sendVoteRequest(req *RequestVoteRequest, c chan *RequestVoteResponse) {
+func (p *Peer) sendVoteRequest(req *RequestVoteRequest) {
 	debugln("peer.vote: ", p.server.Name(), "->", p.Name)
 	req.peer = p
 	if resp := p.server.Transporter().SendVoteRequest(p.server, p, req); resp != nil {
 		debugln("peer.vote.recv: ", p.server.Name(), "<-", p.Name)
 		resp.peer = p
-		c <- resp
+		p.server.channels.sendVoteResponse(resp)
 	} else {
 		debugln("peer.vote.failed: ", p.server.Name(), "<-", p.Name)
 	}
