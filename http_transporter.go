@@ -101,8 +101,8 @@ func (t *HTTPTransporter) SnapshotRecoveryPath() string {
 func (t *HTTPTransporter) Install(server Server, mux HTTPMuxer) {
 	mux.HandleFunc(t.AppendEntriesPath(), t.appendEntriesHandler(server))
 	mux.HandleFunc(t.RequestVotePath(), t.requestVoteHandler(server))
-	mux.HandleFunc(t.SnapshotPath(), t.snapshotHandler(server))
-	mux.HandleFunc(t.SnapshotRecoveryPath(), t.snapshotRecoveryHandler(server))
+	//mux.HandleFunc(t.SnapshotPath(), t.snapshotHandler(server))
+	//mux.HandleFunc(t.SnapshotRecoveryPath(), t.snapshotRecoveryHandler(server))
 }
 
 //--------------------------------------
@@ -269,40 +269,40 @@ func (t *HTTPTransporter) requestVoteHandler(server Server) http.HandlerFunc {
 	}
 }
 
-// Handles incoming Snapshot requests.
-func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		traceln(server.Name(), "RECV /snapshot")
+// // Handles incoming Snapshot requests.
+// func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		traceln(server.Name(), "RECV /snapshot")
 
-		req := &SnapshotRequest{}
-		if _, err := req.Decode(r.Body); err != nil {
-			http.Error(w, "", http.StatusBadRequest)
-			return
-		}
+// 		req := &SnapshotRequest{}
+// 		if _, err := req.Decode(r.Body); err != nil {
+// 			http.Error(w, "", http.StatusBadRequest)
+// 			return
+// 		}
 
-		resp := server.RequestSnapshot(req)
-		if _, err := resp.Encode(w); err != nil {
-			http.Error(w, "", http.StatusInternalServerError)
-			return
-		}
-	}
-}
+// 		resp := server.RequestSnapshot(req)
+// 		if _, err := resp.Encode(w); err != nil {
+// 			http.Error(w, "", http.StatusInternalServerError)
+// 			return
+// 		}
+// 	}
+// }
 
-// Handles incoming SnapshotRecovery requests.
-func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		traceln(server.Name(), "RECV /snapshotRecovery")
+// // Handles incoming SnapshotRecovery requests.
+// func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		traceln(server.Name(), "RECV /snapshotRecovery")
 
-		req := &SnapshotRecoveryRequest{}
-		if _, err := req.Decode(r.Body); err != nil {
-			http.Error(w, "", http.StatusBadRequest)
-			return
-		}
+// 		req := &SnapshotRecoveryRequest{}
+// 		if _, err := req.Decode(r.Body); err != nil {
+// 			http.Error(w, "", http.StatusBadRequest)
+// 			return
+// 		}
 
-		resp := server.SnapshotRecoveryRequest(req)
-		if _, err := resp.Encode(w); err != nil {
-			http.Error(w, "", http.StatusInternalServerError)
-			return
-		}
-	}
-}
+// 		resp := server.SnapshotRecoveryRequest(req)
+// 		if _, err := resp.Encode(w); err != nil {
+// 			http.Error(w, "", http.StatusInternalServerError)
+// 			return
+// 		}
+// 	}
+// }

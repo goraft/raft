@@ -24,9 +24,9 @@ type Log struct {
 	path        string
 	entries     []*LogEntry
 	commitIndex uint64
-	mutex       sync.RWMutex
 	startIndex  uint64 // the index before the first entry in the Log entries
 	startTerm   uint64
+	sync.RWMutex
 }
 
 // The results of the applying a log entry.
@@ -60,15 +60,11 @@ func newLog() *Log {
 
 // The last committed index in the log.
 func (l *Log) CommitIndex() uint64 {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
 	return l.commitIndex
 }
 
 // The current index in the log.
 func (l *Log) currentIndex() uint64 {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
 	return l.internalCurrentIndex()
 }
 
@@ -87,15 +83,11 @@ func (l *Log) nextIndex() uint64 {
 
 // Determines if the log contains zero entries.
 func (l *Log) isEmpty() bool {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
 	return (len(l.entries) == 0) && (l.startIndex == 0)
 }
 
 // The name of the last command in the log.
 func (l *Log) lastCommandName() string {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
 	if len(l.entries) > 0 {
 		if entry := l.entries[len(l.entries)-1]; entry != nil {
 			return entry.CommandName()
@@ -110,9 +102,6 @@ func (l *Log) lastCommandName() string {
 
 // The current term in the log.
 func (l *Log) currentTerm() uint64 {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
 	if len(l.entries) == 0 {
 		return l.startTerm
 	}
@@ -157,7 +146,7 @@ func (l *Log) open(path string) error {
 	// Read the file and decode entries.
 	for {
 		// Instantiate log entry and decode into it.
-		entry, _ := newLogEntry(l, nil, 0, 0, nil)
+		entry := newEmptyLogEntry(l)
 		entry.Position, _ = l.file.Seek(0, os.SEEK_CUR)
 
 		n, err := entry.decode(l.file)
@@ -192,9 +181,6 @@ func (l *Log) open(path string) error {
 
 // Closes the log file.
 func (l *Log) close() {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	if l.file != nil {
 		l.file.Close()
 		l.file = nil
@@ -212,16 +198,13 @@ func (l *Log) sync() error {
 //--------------------------------------
 
 // Creates a log entry associated with this log.
-func (l *Log) createEntry(term uint64, command Command, e *ev) (*LogEntry, error) {
-	return newLogEntry(l, e, l.nextIndex(), term, command)
+func (l *Log) createEntry(term uint64, e *commandEvent) (*LogEntry, error) {
+	return newLogEntry(l, e, l.nextIndex(), term)
 }
 
 // Retrieves an entry from the log. If the entry has been eliminated because
 // of a snapshot then nil is returned.
 func (l *Log) getEntry(index uint64) *LogEntry {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
 	if index <= l.startIndex || index > (l.startIndex+uint64(len(l.entries))) {
 		return nil
 	}
@@ -238,9 +221,6 @@ func (l *Log) containsEntry(index uint64, term uint64) bool {
 // index provided. A nil list of entries is returned if the index no longer
 // exists because a snapshot was made.
 func (l *Log) getEntriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]*LogEntry, uint64) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	// Return nil if index is before the start of the log.
 	if index < l.startIndex {
 		traceln("log.entriesAfter.before: ", index, " ", l.startIndex)
@@ -279,8 +259,6 @@ func (l *Log) getEntriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]*
 
 // Retrieves the last index and term that has been committed to the log.
 func (l *Log) commitInfo() (index uint64, term uint64) {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
 	// If we don't have any committed entries then just return zeros.
 	if l.commitIndex == 0 {
 		return 0, 0
@@ -299,9 +277,6 @@ func (l *Log) commitInfo() (index uint64, term uint64) {
 
 // Retrieves the last index and term that has been appended to the log.
 func (l *Log) lastInfo() (index uint64, term uint64) {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
 	// If we don't have any entries then just return zeros.
 	if len(l.entries) == 0 {
 		return l.startIndex, l.startTerm
@@ -314,8 +289,6 @@ func (l *Log) lastInfo() (index uint64, term uint64) {
 
 // Updates the commit index
 func (l *Log) updateCommitIndex(index uint64) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
 	if index > l.commitIndex {
 		l.commitIndex = index
 	}
@@ -324,9 +297,6 @@ func (l *Log) updateCommitIndex(index uint64) {
 
 // Updates the commit index and writes entries after that index to the stable storage.
 func (l *Log) setCommitIndex(index uint64) error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	// this is not error any more after limited the number of sending entries
 	// commit up to what we already have
 	if index > l.startIndex+uint64(len(l.entries)) {
@@ -368,12 +338,12 @@ func (l *Log) setCommitIndex(index uint64) error {
 		}
 
 		// Apply the changes to the state machine and store the error code.
-		returnValue, err := l.ApplyFunc(command)
+		result, err := l.ApplyFunc(command)
 
 		debugf("setCommitIndex.set.result index: %v, entries index: %v", i, entryIndex)
 		if entry.event != nil {
-			entry.event.returnValue = returnValue
-			entry.event.c <- err
+			entry.event.err = err
+			entry.event.result <- result
 		}
 	}
 	return nil
@@ -394,8 +364,6 @@ func (l *Log) flushCommitIndex() {
 // Truncates the log to the given index and term. This only works if the log
 // at the index has not been committed.
 func (l *Log) truncate(index uint64, term uint64) error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
 	debugln("log.truncate: ", index)
 
 	// Do not allow committed entries to be truncated.
@@ -419,7 +387,8 @@ func (l *Log) truncate(index uint64, term uint64) error {
 		// notify clients if this node is the previous leader
 		for _, entry := range l.entries {
 			if entry.event != nil {
-				entry.event.c <- errors.New("command failed to be committed due to node failure")
+				entry.event.err = errors.New("command failed to be committed due to node failure")
+				entry.event.result <- nil
 			}
 		}
 
@@ -443,7 +412,8 @@ func (l *Log) truncate(index uint64, term uint64) error {
 			for i := index - l.startIndex; i < uint64(len(l.entries)); i++ {
 				entry := l.entries[i]
 				if entry.event != nil {
-					entry.event.c <- errors.New("command failed to be committed due to node failure")
+					entry.event.err = errors.New("command failed to be committed due to node failure")
+					entry.event.result <- nil
 				}
 			}
 
@@ -460,9 +430,6 @@ func (l *Log) truncate(index uint64, term uint64) error {
 
 // Appends a series of entries to the log.
 func (l *Log) appendEntries(entries []*protobuf.LogEntry) error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	startPosition, _ := l.file.Seek(0, os.SEEK_CUR)
 
 	w := bufio.NewWriter(l.file)
@@ -495,9 +462,6 @@ func (l *Log) appendEntries(entries []*protobuf.LogEntry) error {
 
 // Writes a single log entry to the end of the log.
 func (l *Log) appendEntry(entry *LogEntry) error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	if l.file == nil {
 		return errors.New("raft.Log: Log is not open")
 	}
@@ -562,10 +526,6 @@ func (l *Log) writeEntry(entry *LogEntry, w io.Writer) (int64, error) {
 // compact the log before index (including index)
 func (l *Log) compact(index uint64, term uint64) error {
 	var entries []*LogEntry
-
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	if index == 0 {
 		return nil
 	}

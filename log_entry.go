@@ -15,13 +15,15 @@ type LogEntry struct {
 	pb       *protobuf.LogEntry
 	Position int64 // position in the log file
 	log      *Log
-	event    *ev
+	event    *commandEvent
 }
 
 // Creates a new log entry associated with a log.
-func newLogEntry(log *Log, event *ev, index uint64, term uint64, command Command) (*LogEntry, error) {
+func newLogEntry(log *Log, event *commandEvent, index uint64, term uint64) (*LogEntry, error) {
 	var buf bytes.Buffer
 	var commandName string
+	command := event.command
+
 	if command != nil {
 		commandName = command.CommandName()
 		if encoder, ok := command.(CommandEncoder); ok {
@@ -47,6 +49,13 @@ func newLogEntry(log *Log, event *ev, index uint64, term uint64, command Command
 	}
 
 	return e, nil
+}
+
+func newEmptyLogEntry(log *Log) *LogEntry {
+	return &LogEntry{
+		log: log,
+		pb:  &protobuf.LogEntry{},
+	}
 }
 
 func (e *LogEntry) Index() uint64 {
