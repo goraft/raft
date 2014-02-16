@@ -472,7 +472,7 @@ func (s *server) Start() error {
 
 // Shuts down the server.
 func (s *server) Stop() {
-	s.send(&stopValue)
+	s.sendAsync(&stopValue)
 
 	// make sure the server has stopped before we close the log
 	<-s.stopped
@@ -554,28 +554,22 @@ func (s *server) setCurrentTerm(term uint64, leaderName string, append bool) {
 func (s *server) loop() {
 	defer s.debugln("server.loop.end")
 
-	for {
+	for s.state != Stopped {
 		state := s.State()
 
 		s.debugln("server.loop.run ", state)
 		switch state {
 		case Follower:
 			s.followerLoop()
-
 		case Candidate:
 			s.candidateLoop()
-
 		case Leader:
 			s.leaderLoop()
-
 		case Snapshotting:
 			s.snapshotLoop()
-
-		case Stopped:
-			s.stopped <- true
-			return
 		}
 	}
+	s.stopped <- true
 }
 
 // Sends an event to the event loop to be processed. The function will wait
@@ -621,39 +615,38 @@ func (s *server) followerLoop() {
 		case e := <-s.c:
 			if e.target == &stopValue {
 				s.setState(Stopped)
-			} else {
-				switch req := e.target.(type) {
-				case JoinCommand:
-					//If no log entries exist and a self-join command is issued
-					//then immediately become leader and commit entry.
-					if s.log.currentIndex() == 0 && req.NodeName() == s.Name() {
-						s.debugln("selfjoin and promote to leader")
-						s.setState(Leader)
-						s.processCommand(req, e)
-					} else {
-						err = NotLeaderError
-					}
-				case *AppendEntriesRequest:
-					// If heartbeats get too close to the election timeout then send an event.
-					elapsedTime := time.Now().Sub(since)
-					if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
-						s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
-					}
-					e.returnValue, update = s.processAppendEntriesRequest(req)
-				case *RequestVoteRequest:
-					e.returnValue, update = s.processRequestVoteRequest(req)
-				case *SnapshotRequest:
-					e.returnValue = s.processSnapshotRequest(req)
-				default:
-					err = NotLeaderError
-				}
+				return
 			}
 
+			switch req := e.target.(type) {
+			case JoinCommand:
+				//If no log entries exist and a self-join command is issued
+				//then immediately become leader and commit entry.
+				if s.log.currentIndex() == 0 && req.NodeName() == s.Name() {
+					s.debugln("selfjoin and promote to leader")
+					s.setState(Leader)
+					s.processCommand(req, e)
+				} else {
+					err = NotLeaderError
+				}
+			case *AppendEntriesRequest:
+				// If heartbeats get too close to the election timeout then send an event.
+				elapsedTime := time.Now().Sub(since)
+				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
+					s.DispatchEvent(newEvent(ElectionTimeoutThresholdEventType, elapsedTime, nil))
+				}
+				e.returnValue, update = s.processAppendEntriesRequest(req)
+			case *RequestVoteRequest:
+				e.returnValue, update = s.processRequestVoteRequest(req)
+			case *SnapshotRequest:
+				e.returnValue = s.processSnapshotRequest(req)
+			default:
+				err = NotLeaderError
+			}
 			// Callback to event.
 			e.c <- err
 
 		case <-timeoutChan:
-
 			// only allow synced follower to promote to candidate
 			if s.promotable() {
 				s.setState(Candidate)
@@ -729,16 +722,18 @@ func (s *server) candidateLoop() {
 			var err error
 			if e.target == &stopValue {
 				s.setState(Stopped)
-			} else {
-				switch req := e.target.(type) {
-				case Command:
-					err = NotLeaderError
-				case *AppendEntriesRequest:
-					e.returnValue, _ = s.processAppendEntriesRequest(req)
-				case *RequestVoteRequest:
-					e.returnValue, _ = s.processRequestVoteRequest(req)
-				}
+				return
 			}
+
+			switch req := e.target.(type) {
+			case Command:
+				err = NotLeaderError
+			case *AppendEntriesRequest:
+				e.returnValue, _ = s.processAppendEntriesRequest(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = s.processRequestVoteRequest(req)
+			}
+
 			// Callback to event.
 			e.c <- err
 
@@ -777,18 +772,19 @@ func (s *server) leaderLoop() {
 					peer.stopHeartbeat(false)
 				}
 				s.setState(Stopped)
-			} else {
-				switch req := e.target.(type) {
-				case Command:
-					s.processCommand(req, e)
-					continue
-				case *AppendEntriesRequest:
-					e.returnValue, _ = s.processAppendEntriesRequest(req)
-				case *AppendEntriesResponse:
-					s.processAppendEntriesResponse(req)
-				case *RequestVoteRequest:
-					e.returnValue, _ = s.processRequestVoteRequest(req)
-				}
+				return
+			}
+
+			switch req := e.target.(type) {
+			case Command:
+				s.processCommand(req, e)
+				continue
+			case *AppendEntriesRequest:
+				e.returnValue, _ = s.processAppendEntriesRequest(req)
+			case *AppendEntriesResponse:
+				s.processAppendEntriesResponse(req)
+			case *RequestVoteRequest:
+				e.returnValue, _ = s.processRequestVoteRequest(req)
 			}
 
 			// Callback to event.
@@ -809,18 +805,20 @@ func (s *server) snapshotLoop() {
 
 		if e.target == &stopValue {
 			s.setState(Stopped)
-		} else {
-			switch req := e.target.(type) {
-			case Command:
-				err = NotLeaderError
-			case *AppendEntriesRequest:
-				e.returnValue, _ = s.processAppendEntriesRequest(req)
-			case *RequestVoteRequest:
-				e.returnValue, _ = s.processRequestVoteRequest(req)
-			case *SnapshotRecoveryRequest:
-				e.returnValue = s.processSnapshotRecoveryRequest(req)
-			}
+			return
 		}
+
+		switch req := e.target.(type) {
+		case Command:
+			err = NotLeaderError
+		case *AppendEntriesRequest:
+			e.returnValue, _ = s.processAppendEntriesRequest(req)
+		case *RequestVoteRequest:
+			e.returnValue, _ = s.processRequestVoteRequest(req)
+		case *SnapshotRecoveryRequest:
+			e.returnValue = s.processSnapshotRecoveryRequest(req)
+		}
+
 		// Callback to event.
 		e.c <- err
 	}
