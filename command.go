@@ -34,8 +34,8 @@ type CommandEncoder interface {
 	Decode(r io.Reader) error
 }
 
-// Creates a new instance of a command by name.
-func newCommand(name string, data []byte) (Command, error) {
+// NewCommand creates a new instance of a command by name.
+func NewCommand(name string, data []byte) (Command, error) {
 	// Find the registered command.
 	command := commandTypes[name]
 	if command == nil {
