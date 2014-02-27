@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -20,6 +21,8 @@ type Peer struct {
 	mutex             sync.RWMutex
 	stopChan          chan bool
 	heartbeatInterval time.Duration
+	heartbeatTicker   <-chan time.Time
+	failedHeartbeats  float64
 }
 
 //------------------------------------------------------------------------------
@@ -90,6 +93,24 @@ func (p *Peer) stopHeartbeat(flush bool) {
 	p.stopChan <- flush
 }
 
+// Resets the ticker to the default heartbeat interval.
+func (p *Peer) resetHeartbeatInterval() {
+	p.failedHeartbeats = 0
+	p.heartbeatTicker = time.Tick(p.heartbeatInterval)
+	debugln("peer.heartbeat.reset: ", p.Name, p.heartbeatInterval)
+}
+
+// Increases failed heartbeat count and updates ticker with updated backoff interval
+func (p *Peer) backoffHeartbeat() {
+	p.failedHeartbeats++
+	debugln("peer.heartbeat.backoff: ", p.Name, p.failedHeartbeats, p.heartbeatDuration())
+	p.heartbeatTicker = time.Tick(p.heartbeatDuration())
+}
+
+func (p *Peer) heartbeatDuration() time.Duration {
+	return time.Duration(p.heartbeatInterval * time.Duration(math.Pow(float64(2), p.failedHeartbeats)))
+}
+
 //--------------------------------------
 // Copying
 //--------------------------------------
@@ -116,7 +137,7 @@ func (p *Peer) heartbeat(c chan bool) {
 
 	c <- true
 
-	ticker := time.Tick(p.heartbeatInterval)
+	p.heartbeatTicker = time.Tick(p.heartbeatInterval)
 
 	debugln("peer.heartbeat: ", p.Name, p.heartbeatInterval)
 
@@ -134,7 +155,7 @@ func (p *Peer) heartbeat(c chan bool) {
 				return
 			}
 
-		case <-ticker:
+		case <-p.heartbeatTicker:
 			start := time.Now()
 			p.flush()
 			duration := time.Now().Sub(start)
@@ -168,9 +189,15 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 
 	resp := p.server.Transporter().SendAppendEntriesRequest(p.server, p, req)
 	if resp == nil {
+		p.backoffHeartbeat()
 		p.server.DispatchEvent(newEvent(HeartbeatIntervalEventType, p, nil))
 		debugln("peer.append.timeout: ", p.server.Name(), "->", p.Name)
 		return
+	}
+
+	// Reset the failedHeartbeats if it isn't already 0.
+	if p.failedHeartbeats != 0 {
+		p.resetHeartbeatInterval()
 	}
 	traceln("peer.append.resp: ", p.server.Name(), "<-", p.Name)
 
