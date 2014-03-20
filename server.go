@@ -1057,6 +1057,14 @@ func (s *server) AddPeer(name string, connectiongString string) error {
 	return nil
 }
 
+// Updates a peer from the server.
+func (s *server) UpdatePeer(name string) error {
+	s.debugln("server.peer.update: ", name, len(s.peers))
+	// Write the configuration to file.
+	s.writeConf()
+	return nil
+}
+
 // Removes a peer from the server.
 func (s *server) RemovePeer(name string) error {
 	s.debugln("server.peer.remove: ", name, len(s.peers))
