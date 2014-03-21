@@ -20,16 +20,22 @@ type LogEntry struct {
 
 // Creates a new log entry associated with a log.
 func newLogEntry(log *Log, event *ev, index uint64, term uint64, command Command) (*LogEntry, error) {
-	var buf bytes.Buffer
+	var data []byte
 	var commandName string
 	if command != nil {
 		commandName = command.CommandName()
 		if encoder, ok := command.(CommandEncoder); ok {
+			var buf bytes.Buffer
 			if err := encoder.Encode(&buf); err != nil {
 				return nil, err
 			}
+			data = buf.Bytes()
 		} else {
-			json.NewEncoder(&buf).Encode(command)
+			var err error
+			data, err = json.Marshal(command)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -37,7 +43,7 @@ func newLogEntry(log *Log, event *ev, index uint64, term uint64, command Command
 		Index:       proto.Uint64(index),
 		Term:        proto.Uint64(term),
 		CommandName: proto.String(commandName),
-		Command:     buf.Bytes(),
+		Command:     data,
 	}
 
 	e := &LogEntry{
