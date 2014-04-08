@@ -146,12 +146,16 @@ func (l *Log) open(path string) error {
 		// if the log file does not exist before
 		// we create the log file and set commitIndex to 0
 		if os.IsNotExist(err) {
-			l.file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 			debugln("log.open.create ", path)
-			if err == nil {
-				l.initialized = true
+			l.file, err = os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
+			if err != nil {
+				return err
 			}
-			return err
+			if isBtrfs(l.file.Fd()) {
+				setNOCOW(l.file.Fd())
+			}
+			l.initialized = true
+			return nil
 		}
 		return err
 	}
