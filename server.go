@@ -484,8 +484,8 @@ func (s *server) Init() error {
 	// Server has been initialized or server was stopped after initialized
 	// If log has been initialized, we know that the server was stopped after
 	// running.
-	if s.state == Initialized || s.log.initialized {
-		s.state = Initialized
+	if s.State() == Initialized || s.log.initialized {
+		s.setState(Initialized)
 		return nil
 	}
 
@@ -510,7 +510,7 @@ func (s *server) Init() error {
 	// Update the term to the last term in the log.
 	_, s.currentTerm = s.log.lastInfo()
 
-	s.state = Initialized
+	s.setState(Initialized)
 	return nil
 }
 
