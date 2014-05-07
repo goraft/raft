@@ -177,6 +177,8 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 		stateMachineIo = t
 	case StateMachineBytes:
 		stateMachineIo = &StateMachineIoWrapper{t}
+	default:
+		panic("raft:  StateMachine must implement either StateMachineBytes or StateMachineIo")
 	}
 	s := &server{
 		name:                    name,
