@@ -1,11 +1,11 @@
 package raft
 
 import (
-	"testing"
-	"time"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"io"
+	"testing"
+	"time"
 )
 
 // Ensure that a snapshot occurs when there are existing logs.
@@ -77,14 +77,18 @@ func TestSnapshotRequest(t *testing.T) {
 		assert.Equal(t, resp.Success, true)
 		assert.Equal(t, s.State(), Snapshotting)
 
+		stateToSend := &StateMachineIoWrapper{&DefaultStateMachine{[]byte("bar")}}
+		r, w := io.Pipe()
+		go func() {
+			stateToSend.WriteSnapshot(w)
+		}()
 		// Send recovery request.
-		resp2 := s.SnapshotRecoveryRequest(&SnapshotRecoveryRequest{
+		resp2 := s.SnapshotRecoveryRequest(&SnapshotRecoveryRequestHeader{
 			LeaderName: "1",
 			LastIndex:  5,
 			LastTerm:   2,
 			Peers:      make([]*Peer, 0),
-			State:      []byte("bar"),
-		})
+		}, r)
 		assert.Equal(t, resp2.Success, true)
 	})
 }
@@ -92,7 +96,7 @@ func TestSnapshotRequest(t *testing.T) {
 func runServerWithMockStateMachine(state string, fn func(s Server, m *mock.Mock)) {
 	var m mockStateMachine
 	s := newTestServer("1", &testTransporter{})
-	s.(*server).stateMachine = &m
+	s.(*server).stateMachine = &StateMachineIoWrapper{&m}
 	if err := s.Start(); err != nil {
 		panic("server start error: " + err.Error())
 	}

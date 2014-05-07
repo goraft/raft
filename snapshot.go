@@ -1,15 +1,17 @@
 package raft
 
 import (
+	"bufio"
+	"code.google.com/p/gogoprotobuf/proto"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/goraft/raft/protobuf"
+	"hash"
 	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"os"
-
-	"code.google.com/p/gogoprotobuf/proto"
-	"github.com/goraft/raft/protobuf"
 )
 
 // Snapshot represents an in-memory representation of the current state of the system.
@@ -19,17 +21,16 @@ type Snapshot struct {
 
 	// Cluster configuration.
 	Peers []*Peer `json:"peers"`
-	State []byte  `json:"state"`
 	Path  string  `json:"path"`
 }
 
 // The request sent to a server to start from the snapshot.
-type SnapshotRecoveryRequest struct {
+type SnapshotRecoveryRequestHeader struct {
 	LeaderName string
 	LastIndex  uint64
 	LastTerm   uint64
 	Peers      []*Peer
-	State      []byte
+	// bytes of state stream here, see StateMachineIo.WriteSnapshot, StateMachineIo.RecoverSnapshot
 }
 
 // The response returned from a server appending entries to the log.
@@ -51,38 +52,135 @@ type SnapshotResponse struct {
 	Success bool `json:"success"`
 }
 
-// save writes the snapshot to file.
-func (ss *Snapshot) save() error {
+// returns the snapshot metadata and a readcloser of snapshot state
+func readSnapState(path string) (*Snapshot, io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	in := bufio.NewReaderSize(f, 64*1024)
+	var checksum uint32
+	var headerLen int
+	_, err = fmt.Fscanf(in, "%08x\n%08x\n", &checksum, &headerLen)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	header := make([]byte, headerLen, headerLen)
+	nRead := 0
+	for nRead < headerLen {
+		n, err := in.Read(header[nRead:])
+		if err != nil {
+			f.Close()
+			return nil, nil, err
+		}
+		nRead += n
+	}
+	snap := &Snapshot{}
+	err = json.Unmarshal(header, snap)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return snap, &sumReader{f, in, crc32.NewIEEE(), checksum}, nil
+}
+
+// pulls from the reader and adds up a sum, throws error at EOF or Close if sum not expected
+type sumReader struct {
+	f        *os.File
+	in       io.Reader
+	sum      hash.Hash32
+	expected uint32
+}
+
+func (s *sumReader) Read(b []byte) (n int, err error) {
+	n, err = s.in.Read(b)
+	if n > 0 {
+		s.sum.Write(b[:n])
+	}
+	if err == io.EOF {
+		if s.sum.Sum32() != s.expected {
+			return n, fmt.Errorf("Bad checksum! Got %d expected %d", s.sum.Sum32(), s.expected)
+		}
+	}
+	return n, err
+}
+
+func (s *sumReader) Close() (err error) {
+	err = s.f.Close()
+	if s.sum.Sum32() != s.expected {
+		return fmt.Errorf("Bad checksum! Got %d expected %d", s.sum.Sum32(), s.expected)
+	}
+	return err
+}
+
+// returns a writer which can be used to save a snapshot.
+// upon close(), this snapshot has been fsync'd with a crc32 checksum in the first bytes of the file
+func (ss *Snapshot) writeState() (io.WriteCloser, error) {
 	// Open the file for writing.
 	file, err := os.OpenFile(ss.Path, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer file.Close()
-
-	// Serialize to JSON.
+	// serialize header json
 	b, err := json.Marshal(ss)
 	if err != nil {
+		return nil, err
+	}
+	// sum&size, then header bytes
+	// checksum initially zero, we overwrite later
+	bufOut := bufio.NewWriterSize(file, 64*1024)
+	_, err = fmt.Fprintf(bufOut, "%08x\n%08x\n", 0, len(b))
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("Error writing header: %s", err)
+	}
+	if _, err := bufOut.Write(b); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("Error writing header: %s", err)
+	}
+	// state streams after the checksum and json header
+	return &sumWriter{
+		file,
+		bufOut,
+		crc32.NewIEEE(),
+	}, nil
+}
+
+type sumWriter struct {
+	f      *os.File
+	bufout *bufio.Writer // buffered writer
+	sum    hash.Hash32
+}
+
+func (s *sumWriter) Write(b []byte) (n int, err error) {
+	n, err = s.bufout.Write(b)
+	if n > 0 {
+		s.sum.Write(b[:n])
+	}
+	return n, err
+}
+
+func (s *sumWriter) Close() (err error) {
+	// flush rest of data from bufout
+	if err = s.bufout.Flush(); err != nil {
+		return err
+	}
+	// seek to beginning to overwrite checksum
+	if _, err = s.f.Seek(0, os.SEEK_SET); err != nil {
 		return err
 	}
 
-	// Generate checksum and write it to disk.
-	checksum := crc32.ChecksumIEEE(b)
-	if _, err = fmt.Fprintf(file, "%08x\n", checksum); err != nil {
+	// write sum
+	if _, err = fmt.Fprintf(s.f, "%08x\n", s.sum.Sum32()); err != nil {
 		return err
 	}
-
-	// Write the snapshot to disk.
-	if _, err = file.Write(b); err != nil {
-		return err
+	// fsync
+	if err = s.f.Sync(); err != nil {
+		return fmt.Errorf("Error fsyncing snapshot: %s", err)
 	}
-
-	// Ensure that the snapshot has been flushed to disk before continuing.
-	if err := file.Sync(); err != nil {
-		return err
-	}
-
-	return nil
+	return s.f.Close()
 }
 
 // remove deletes the snapshot file.
@@ -94,19 +192,21 @@ func (ss *Snapshot) remove() error {
 }
 
 // Creates a new Snapshot request.
-func newSnapshotRecoveryRequest(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequest {
-	return &SnapshotRecoveryRequest{
+
+func newSnapshotRecoveryRequestHeader(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequestHeader {
+	return &SnapshotRecoveryRequestHeader{
 		LeaderName: leaderName,
 		LastIndex:  snapshot.LastIndex,
 		LastTerm:   snapshot.LastTerm,
 		Peers:      snapshot.Peers,
-		State:      snapshot.State,
 	}
 }
 
+var empty = make([]byte, 0, 0)
+
 // Encodes the SnapshotRecoveryRequest to a buffer. Returns the number of bytes
 // written and any error that may have occurred.
-func (req *SnapshotRecoveryRequest) Encode(w io.Writer) (int, error) {
+func (req *SnapshotRecoveryRequestHeader) Encode(w io.Writer) (int, error) {
 
 	protoPeers := make([]*protobuf.SnapshotRecoveryRequest_Peer, len(req.Peers))
 
@@ -122,36 +222,25 @@ func (req *SnapshotRecoveryRequest) Encode(w io.Writer) (int, error) {
 		LastIndex:  proto.Uint64(req.LastIndex),
 		LastTerm:   proto.Uint64(req.LastTerm),
 		Peers:      protoPeers,
-		State:      req.State,
+		State:      empty,
 	}
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
-
-	return w.Write(p)
+	return encodeProto(w, pb)
 }
 
 // Decodes the SnapshotRecoveryRequest from a buffer. Returns the number of bytes read and
 // any error that occurs.
-func (req *SnapshotRecoveryRequest) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return 0, err
-	}
-
-	totalBytes := len(data)
+func (req *SnapshotRecoveryRequestHeader) Decode(r io.Reader) (int, error) {
 
 	pb := &protobuf.SnapshotRecoveryRequest{}
-	if err = proto.Unmarshal(data, pb); err != nil {
+
+	n, err := decodeProto(r, pb)
+	if err != nil {
 		return -1, err
 	}
 
 	req.LeaderName = pb.GetLeaderName()
 	req.LastIndex = pb.GetLastIndex()
 	req.LastTerm = pb.GetLastTerm()
-	req.State = pb.GetState()
 
 	req.Peers = make([]*Peer, len(pb.Peers))
 
@@ -162,7 +251,52 @@ func (req *SnapshotRecoveryRequest) Decode(r io.Reader) (int, error) {
 		}
 	}
 
-	return totalBytes, nil
+	return n, nil
+}
+
+func decodeProto(r io.Reader, p proto.Unmarshaler) (n int, err error) {
+	lenBuff := make([]byte, 4, 4)
+	n, err = r.Read(lenBuff)
+	if err != nil {
+		return n, err
+	}
+	length := int(binary.LittleEndian.Uint32(lenBuff))
+	body := make([]byte, length, length)
+	nRead := 0
+	for nRead < length {
+		n, err = r.Read(body[nRead:])
+		if n > 0 {
+			nRead += n
+		}
+		if err != nil {
+			return nRead + 4, err
+		}
+	}
+	return nRead + 4, nil
+}
+
+func encodeProto(w io.Writer, p proto.Marshaler) (n int, err error) {
+	buff, err := p.Marshal()
+	if err != nil {
+		return 0, err
+	}
+	lenBuff := make([]byte, 4, 4)
+	binary.LittleEndian.PutUint32(lenBuff, uint32(len(buff)))
+	n, err = w.Write(lenBuff)
+	if err != nil {
+		return n, err
+	}
+	nWritten := 0
+	for nWritten < len(buff) {
+		n, err = w.Write(buff[nWritten:])
+		if n > 0 {
+			nWritten += n
+		}
+		if err != nil {
+			return nWritten + 4, err
+		}
+	}
+	return nWritten + 4, nil
 }
 
 // Creates a new Snapshot response.
