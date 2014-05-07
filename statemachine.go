@@ -8,9 +8,19 @@ import (
 // StateMachine is the interface for allowing the host application to save and
 // recovery the state machine. This makes it possible to make snapshots
 // and compact the log.
+
 type StateMachine interface {
+}
+type StateMachineBytes interface {
+	StateMachine
 	Save() ([]byte, error)
 	Recovery([]byte) error
+}
+
+type StateMachineIo interface {
+	StateMachine
+	WriteSnapshot(w io.Writer) (int, error)
+	RecoverSnapshot(r io.Reader) error
 }
 
 type DefaultStateMachine struct {
@@ -26,13 +36,9 @@ func (d *DefaultStateMachine) Recovery(b []byte) error {
 	return nil
 }
 
-type StateMachineIo interface {
-	WriteSnapshot(w io.Writer) (int, error)
-	RecoverSnapshot(r io.Reader) error
-}
-
+// wraps a byte state machine
 type StateMachineIoWrapper struct {
-	s StateMachine
+	s StateMachineBytes
 }
 
 func (s *StateMachineIoWrapper) WriteSnapshot(w io.Writer) (int, error) {

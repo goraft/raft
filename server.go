@@ -163,19 +163,26 @@ type ev struct {
 // compaction is to be disabled. context can be anything (including nil)
 // and is not used by the raft package except returned by
 // Server.Context(). connectionString can be anything.
-func NewServer(name string, path string, transporter Transporter, stateMachine StateMachineIo, ctx interface{}, connectionString string) (Server, error) {
+func NewServer(name string, path string, transporter Transporter, stateMachine StateMachine, ctx interface{}, connectionString string) (Server, error) {
 	if name == "" {
 		return nil, errors.New("raft.Server: Name cannot be blank")
 	}
 	if transporter == nil {
 		panic("raft: Transporter required")
 	}
-
+	// wire in either a streaming-based or a []byte based statemachine
+	var stateMachineIo StateMachineIo
+	switch t := stateMachine.(type) {
+	case StateMachineIo:
+		stateMachineIo = t
+	case StateMachineBytes:
+		stateMachineIo = &StateMachineIoWrapper{t}
+	}
 	s := &server{
 		name:                    name,
 		path:                    path,
 		transporter:             transporter,
-		stateMachine:            stateMachine,
+		stateMachine:            stateMachineIo,
 		context:                 ctx,
 		state:                   Stopped,
 		peers:                   make(map[string]*Peer),

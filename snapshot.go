@@ -3,14 +3,12 @@ package raft
 import (
 	"bufio"
 	"code.google.com/p/gogoprotobuf/proto"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"github.com/goraft/raft/protobuf"
 	"hash"
 	"hash/crc32"
 	"io"
-	"io/ioutil"
 	"os"
 )
 
@@ -50,6 +48,187 @@ type SnapshotRequest struct {
 // The response returned if the follower entered snapshot state
 type SnapshotResponse struct {
 	Success bool `json:"success"`
+}
+
+// Creates a new Snapshot request.
+
+func newSnapshotRecoveryRequestHeader(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequestHeader {
+	return &SnapshotRecoveryRequestHeader{
+		LeaderName: leaderName,
+		LastIndex:  snapshot.LastIndex,
+		LastTerm:   snapshot.LastTerm,
+		Peers:      snapshot.Peers,
+	}
+}
+
+var empty = make([]byte, 0, 0)
+
+func (req *SnapshotRecoveryRequestHeader) Marshal() ([]byte, error) {
+	protoPeers := make([]*protobuf.SnapshotRecoveryRequest_Peer, len(req.Peers))
+	for i, peer := range req.Peers {
+		protoPeers[i] = &protobuf.SnapshotRecoveryRequest_Peer{
+			Name:             proto.String(peer.Name),
+			ConnectionString: proto.String(peer.ConnectionString),
+		}
+	}
+	pb := &protobuf.SnapshotRecoveryRequest{
+		LeaderName: proto.String(req.LeaderName),
+		LastIndex:  proto.Uint64(req.LastIndex),
+		LastTerm:   proto.Uint64(req.LastTerm),
+		Peers:      protoPeers,
+		State:      empty,
+	}
+	return pb.Marshal()
+}
+
+// Encodes the SnapshotRecoveryRequest to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (req *SnapshotRecoveryRequestHeader) Encode(w io.Writer) (int, error) {
+	return encode(req, w)
+}
+
+func (req *SnapshotRecoveryRequestHeader) Unmarshal(data []byte) error {
+	pb := &protobuf.SnapshotRecoveryRequest{}
+	if err := pb.Unmarshal(data); err != nil {
+		return err
+	}
+	req.LeaderName = pb.GetLeaderName()
+	req.LastIndex = pb.GetLastIndex()
+	req.LastTerm = pb.GetLastTerm()
+	req.Peers = make([]*Peer, len(pb.Peers))
+	for i, peer := range pb.Peers {
+		req.Peers[i] = &Peer{
+			Name:             peer.GetName(),
+			ConnectionString: peer.GetConnectionString(),
+		}
+	}
+	return nil
+}
+
+// Decodes the SnapshotRecoveryRequest from a buffer. Returns the number of bytes read and
+// any error that occurs.
+func (req *SnapshotRecoveryRequestHeader) Decode(r io.Reader) (int, error) {
+	return decode(req, r)
+}
+
+// Creates a new Snapshot response.
+func newSnapshotRecoveryResponse(term uint64, success bool, commitIndex uint64) *SnapshotRecoveryResponse {
+	return &SnapshotRecoveryResponse{
+		Term:        term,
+		Success:     success,
+		CommitIndex: commitIndex,
+	}
+}
+
+func (req *SnapshotRecoveryResponse) Marshal() ([]byte, error) {
+	pb := &protobuf.SnapshotRecoveryResponse{
+		Term:        proto.Uint64(req.Term),
+		Success:     proto.Bool(req.Success),
+		CommitIndex: proto.Uint64(req.CommitIndex),
+	}
+	return proto.Marshal(pb)
+}
+
+// Encode writes the response to a writer.
+// Returns the number of bytes written and any error that occurs.
+func (req *SnapshotRecoveryResponse) Encode(w io.Writer) (int, error) {
+	return encode(req, w)
+}
+
+func (req *SnapshotRecoveryResponse) Unmarshal(data []byte) error {
+	pb := &protobuf.SnapshotRecoveryResponse{}
+	if err := proto.Unmarshal(data, pb); err != nil {
+		return err
+	}
+
+	req.Term = pb.GetTerm()
+	req.Success = pb.GetSuccess()
+	req.CommitIndex = pb.GetCommitIndex()
+	return nil
+}
+
+// Decodes the SnapshotRecoveryResponse from a buffer.
+func (req *SnapshotRecoveryResponse) Decode(r io.Reader) (int, error) {
+	return decode(req, r)
+}
+
+// Creates a new Snapshot request.
+func newSnapshotRequest(leaderName string, snapshot *Snapshot) *SnapshotRequest {
+	return &SnapshotRequest{
+		LeaderName: leaderName,
+		LastIndex:  snapshot.LastIndex,
+		LastTerm:   snapshot.LastTerm,
+	}
+}
+
+func (req *SnapshotRequest) Marshal() ([]byte, error) {
+	pb := &protobuf.SnapshotRequest{
+		LeaderName: proto.String(req.LeaderName),
+		LastIndex:  proto.Uint64(req.LastIndex),
+		LastTerm:   proto.Uint64(req.LastTerm),
+	}
+	return proto.Marshal(pb)
+}
+
+// Encodes the SnapshotRequest to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (req *SnapshotRequest) Encode(w io.Writer) (int, error) {
+	return encode(req, w)
+}
+
+func (req *SnapshotRequest) Unmarshal(data []byte) error {
+	pb := &protobuf.SnapshotRequest{}
+
+	if err := proto.Unmarshal(data, pb); err != nil {
+		return err
+	}
+
+	req.LeaderName = pb.GetLeaderName()
+	req.LastIndex = pb.GetLastIndex()
+	req.LastTerm = pb.GetLastTerm()
+	return nil
+}
+
+// Decodes the SnapshotRequest from a buffer. Returns the number of bytes read and
+// any error that occurs.
+func (req *SnapshotRequest) Decode(r io.Reader) (int, error) {
+	return decode(req, r)
+
+}
+
+// Creates a new Snapshot response.
+func newSnapshotResponse(success bool) *SnapshotResponse {
+	return &SnapshotResponse{
+		Success: success,
+	}
+}
+
+func (resp *SnapshotResponse) Marshal() ([]byte, error) {
+	pb := &protobuf.SnapshotResponse{
+		Success: proto.Bool(resp.Success),
+	}
+	return proto.Marshal(pb)
+}
+
+// Encodes the SnapshotResponse to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (resp *SnapshotResponse) Encode(w io.Writer) (int, error) {
+	return encode(resp, w)
+}
+
+func (resp *SnapshotResponse) Unmarshal(data []byte) error {
+	pb := &protobuf.SnapshotResponse{}
+	if err := proto.Unmarshal(data, pb); err != nil {
+		return err
+	}
+	resp.Success = pb.GetSuccess()
+	return nil
+}
+
+// Decodes the SnapshotResponse from a buffer. Returns the number of bytes read and
+// any error that occurs.
+func (resp *SnapshotResponse) Decode(r io.Reader) (int, error) {
+	return decode(resp, r)
 }
 
 // returns the snapshot metadata and a readcloser of snapshot state
@@ -189,250 +368,4 @@ func (ss *Snapshot) remove() error {
 		return err
 	}
 	return nil
-}
-
-// Creates a new Snapshot request.
-
-func newSnapshotRecoveryRequestHeader(leaderName string, snapshot *Snapshot) *SnapshotRecoveryRequestHeader {
-	return &SnapshotRecoveryRequestHeader{
-		LeaderName: leaderName,
-		LastIndex:  snapshot.LastIndex,
-		LastTerm:   snapshot.LastTerm,
-		Peers:      snapshot.Peers,
-	}
-}
-
-var empty = make([]byte, 0, 0)
-
-// Encodes the SnapshotRecoveryRequest to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (req *SnapshotRecoveryRequestHeader) Encode(w io.Writer) (int, error) {
-
-	protoPeers := make([]*protobuf.SnapshotRecoveryRequest_Peer, len(req.Peers))
-
-	for i, peer := range req.Peers {
-		protoPeers[i] = &protobuf.SnapshotRecoveryRequest_Peer{
-			Name:             proto.String(peer.Name),
-			ConnectionString: proto.String(peer.ConnectionString),
-		}
-	}
-
-	pb := &protobuf.SnapshotRecoveryRequest{
-		LeaderName: proto.String(req.LeaderName),
-		LastIndex:  proto.Uint64(req.LastIndex),
-		LastTerm:   proto.Uint64(req.LastTerm),
-		Peers:      protoPeers,
-		State:      empty,
-	}
-	return encodeProto(w, pb)
-}
-
-// Decodes the SnapshotRecoveryRequest from a buffer. Returns the number of bytes read and
-// any error that occurs.
-func (req *SnapshotRecoveryRequestHeader) Decode(r io.Reader) (int, error) {
-
-	pb := &protobuf.SnapshotRecoveryRequest{}
-
-	n, err := decodeProto(r, pb)
-	if err != nil {
-		return -1, err
-	}
-
-	req.LeaderName = pb.GetLeaderName()
-	req.LastIndex = pb.GetLastIndex()
-	req.LastTerm = pb.GetLastTerm()
-
-	req.Peers = make([]*Peer, len(pb.Peers))
-
-	for i, peer := range pb.Peers {
-		req.Peers[i] = &Peer{
-			Name:             peer.GetName(),
-			ConnectionString: peer.GetConnectionString(),
-		}
-	}
-
-	return n, nil
-}
-
-func decodeProto(r io.Reader, p proto.Unmarshaler) (n int, err error) {
-	lenBuff := make([]byte, 4, 4)
-	n, err = r.Read(lenBuff)
-	if err != nil {
-		return n, err
-	}
-	length := int(binary.LittleEndian.Uint32(lenBuff))
-	body := make([]byte, length, length)
-	nRead := 0
-	for nRead < length {
-		n, err = r.Read(body[nRead:])
-		if n > 0 {
-			nRead += n
-		}
-		if err != nil {
-			return nRead + 4, err
-		}
-	}
-	return nRead + 4, nil
-}
-
-func encodeProto(w io.Writer, p proto.Marshaler) (n int, err error) {
-	buff, err := p.Marshal()
-	if err != nil {
-		return 0, err
-	}
-	lenBuff := make([]byte, 4, 4)
-	binary.LittleEndian.PutUint32(lenBuff, uint32(len(buff)))
-	n, err = w.Write(lenBuff)
-	if err != nil {
-		return n, err
-	}
-	nWritten := 0
-	for nWritten < len(buff) {
-		n, err = w.Write(buff[nWritten:])
-		if n > 0 {
-			nWritten += n
-		}
-		if err != nil {
-			return nWritten + 4, err
-		}
-	}
-	return nWritten + 4, nil
-}
-
-// Creates a new Snapshot response.
-func newSnapshotRecoveryResponse(term uint64, success bool, commitIndex uint64) *SnapshotRecoveryResponse {
-	return &SnapshotRecoveryResponse{
-		Term:        term,
-		Success:     success,
-		CommitIndex: commitIndex,
-	}
-}
-
-// Encode writes the response to a writer.
-// Returns the number of bytes written and any error that occurs.
-func (req *SnapshotRecoveryResponse) Encode(w io.Writer) (int, error) {
-	pb := &protobuf.SnapshotRecoveryResponse{
-		Term:        proto.Uint64(req.Term),
-		Success:     proto.Bool(req.Success),
-		CommitIndex: proto.Uint64(req.CommitIndex),
-	}
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
-
-	return w.Write(p)
-}
-
-// Decodes the SnapshotRecoveryResponse from a buffer.
-func (req *SnapshotRecoveryResponse) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return 0, err
-	}
-
-	totalBytes := len(data)
-
-	pb := &protobuf.SnapshotRecoveryResponse{}
-	if err := proto.Unmarshal(data, pb); err != nil {
-		return -1, err
-	}
-
-	req.Term = pb.GetTerm()
-	req.Success = pb.GetSuccess()
-	req.CommitIndex = pb.GetCommitIndex()
-
-	return totalBytes, nil
-}
-
-// Creates a new Snapshot request.
-func newSnapshotRequest(leaderName string, snapshot *Snapshot) *SnapshotRequest {
-	return &SnapshotRequest{
-		LeaderName: leaderName,
-		LastIndex:  snapshot.LastIndex,
-		LastTerm:   snapshot.LastTerm,
-	}
-}
-
-// Encodes the SnapshotRequest to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (req *SnapshotRequest) Encode(w io.Writer) (int, error) {
-	pb := &protobuf.SnapshotRequest{
-		LeaderName: proto.String(req.LeaderName),
-		LastIndex:  proto.Uint64(req.LastIndex),
-		LastTerm:   proto.Uint64(req.LastTerm),
-	}
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
-
-	return w.Write(p)
-}
-
-// Decodes the SnapshotRequest from a buffer. Returns the number of bytes read and
-// any error that occurs.
-func (req *SnapshotRequest) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return 0, err
-	}
-
-	totalBytes := len(data)
-
-	pb := &protobuf.SnapshotRequest{}
-
-	if err := proto.Unmarshal(data, pb); err != nil {
-		return -1, err
-	}
-
-	req.LeaderName = pb.GetLeaderName()
-	req.LastIndex = pb.GetLastIndex()
-	req.LastTerm = pb.GetLastTerm()
-
-	return totalBytes, nil
-}
-
-// Creates a new Snapshot response.
-func newSnapshotResponse(success bool) *SnapshotResponse {
-	return &SnapshotResponse{
-		Success: success,
-	}
-}
-
-// Encodes the SnapshotResponse to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (resp *SnapshotResponse) Encode(w io.Writer) (int, error) {
-	pb := &protobuf.SnapshotResponse{
-		Success: proto.Bool(resp.Success),
-	}
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
-
-	return w.Write(p)
-}
-
-// Decodes the SnapshotResponse from a buffer. Returns the number of bytes read and
-// any error that occurs.
-func (resp *SnapshotResponse) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return 0, err
-	}
-
-	totalBytes := len(data)
-
-	pb := &protobuf.SnapshotResponse{}
-	if err := proto.Unmarshal(data, pb); err != nil {
-		return -1, err
-	}
-
-	resp.Success = pb.GetSuccess()
-
-	return totalBytes, nil
 }

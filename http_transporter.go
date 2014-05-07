@@ -259,7 +259,7 @@ func (t *HTTPTransporter) appendEntriesHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-
+		r.Body.Close()
 		resp := server.AppendEntries(req)
 		if resp == nil {
 			http.Error(w, "Failed creating response.", http.StatusInternalServerError)
@@ -282,6 +282,7 @@ func (t *HTTPTransporter) requestVoteHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
 		resp := server.RequestVote(req)
 		if resp == nil {
@@ -305,6 +306,7 @@ func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
 		resp := server.RequestSnapshot(req)
 		if resp == nil {
@@ -328,6 +330,7 @@ func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFun
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
 		resp := server.SnapshotRecoveryRequest(req, r.Body)
 		if resp == nil {
