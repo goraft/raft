@@ -1442,7 +1442,7 @@ func (s *server) readConf() error {
 	b, err := ioutil.ReadFile(confPath)
 
 	if err != nil {
-		return err
+		return nil
 	}
 
 	conf := &Config{}
