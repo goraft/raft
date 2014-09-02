@@ -37,6 +37,7 @@ These projects are built on go-raft:
 - [skynetservices/skydns](https://github.com/skynetservices/skydns) - DNS for skynet or any other service discovery.
 - [influxdb/influxdb](https://github.com/influxdb/influxdb) - An open-source, distributed, time series, events, and metrics database.
 - [Weed File System](https://weed-fs.googlecode.com) - A scalable distributed key-to-file system with O(1) disk access for each read.
+- [rqlite](https://github.com/otoolep/rqlite) - A replicated SQLite database, distributing the database replicas across multiple nodes.
 
 If you have a project that you're using go-raft in, please add it to this README so others can see implementation examples.
 
