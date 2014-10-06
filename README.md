@@ -136,4 +136,4 @@ If you have a very large cluster that you need to replicate to using Option 1 th
 Ben Johnson started this library for use in his behavioral analytics database called [Sky](https://github.com/skydb/sky).
 He put it under the MIT license in the hopes that it would be useful for other projects too.
 
-[raft-paper]: https://ramcloud.stanford.edu/wiki/download/attachments/11370504/raft.pdf
+[raft-paper]: https://ramcloud.stanford.edu/raft.pdf
