@@ -1255,7 +1255,7 @@ func (s *server) saveSnapshot() error {
 
 // Retrieves the log path for the server.
 func (s *server) SnapshotPath(lastIndex uint64, lastTerm uint64) string {
-	return path.Join(s.path, "snapshot", fmt.Sprintf("%v_%v.ss", lastTerm, lastIndex))
+	return path.Join(s.path, "snapshot", fmt.Sprintf("%032v_%v.ss", lastTerm, lastIndex))
 }
 
 func (s *server) RequestSnapshot(req *SnapshotRequest) *SnapshotResponse {
