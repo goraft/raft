@@ -3,6 +3,13 @@ go-raft [![Build Status](https://drone.io/github.com/goraft/raft/status.png)](ht
 
 ## Overview
 
+![unmaintained](http://img.shields.io/badge/status-unmaintained-red.png)
+
+**NOTE**: This project is unmaintained. If you are using goraft in a project
+and want to carry the project forward please file an issue with your ideas and
+intentions. The original project authors have created new raft implementations
+now used in etcd and InfluxDB.
+
 This is a Go implementation of the Raft distributed consensus protocol.
 Raft is a protocol by which a cluster of nodes can maintain a replicated state machine.
 The state machine is kept in sync through the use of a replicated log.
