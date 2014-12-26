@@ -4,7 +4,7 @@ import (
 	"io"
 	"io/ioutil"
 
-	"code.google.com/p/gogoprotobuf/proto"
+	"github.com/gogo/protobuf/proto"
 	"github.com/goraft/raft/protobuf"
 )
 
