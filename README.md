@@ -40,10 +40,8 @@ go-raft is under the MIT license.
 
 These projects are built on go-raft:
 
-- [coreos/etcd 0.4.* and older](https://github.com/coreos/etcd) - A highly-available key value store for shared configuration and service discovery. Note: etcd from v2.0.0 onward has since started using a [new raft implementation](godoc.org/github.com/coreos/etcd/raft).
+
 - [goraft/raftd](https://github.com/goraft/raftd) - A reference implementation for using the go-raft library for distributed consensus.
-- [skynetservices/skydns](https://github.com/skynetservices/skydns) - DNS for skynet or any other service discovery.
-- [influxdb/influxdb](https://github.com/influxdb/influxdb) - An open-source, distributed, time series, events, and metrics database.
 - [Weed File System](https://weed-fs.googlecode.com) - A scalable distributed key-to-file system with O(1) disk access for each read.
 - [rqlite](https://github.com/otoolep/rqlite) - A replicated SQLite database, distributing the database replicas across multiple nodes.
 
