@@ -19,13 +19,34 @@ import (
 //
 //------------------------------------------------------------------------------
 
+type State byte
+
+func (s State) String() string {
+	switch s {
+	case Stopped:
+		return "stopped"
+	case Initialized:
+		return "initalized"
+	case Follower:
+		return "follower"
+	case Candidate:
+		return "candidate"
+	case Leader:
+		return "leader"
+	case Snapshotting:
+		return "snapshotting"
+	default:
+		return "invalidtype"
+	}
+}
+
 const (
-	Stopped      = "stopped"
-	Initialized  = "initialized"
-	Follower     = "follower"
-	Candidate    = "candidate"
-	Leader       = "leader"
-	Snapshotting = "snapshotting"
+	Stopped State = iota
+	Initialized
+	Follower
+	Candidate
+	Leader
+	Snapshotting
 )
 
 const (
@@ -70,7 +91,7 @@ type Server interface {
 	Context() interface{}
 	StateMachine() StateMachine
 	Leader() string
-	State() string
+	State() State
 	Path() string
 	LogPath() string
 	SnapshotPath(lastIndex uint64, lastTerm uint64) string
@@ -112,7 +133,7 @@ type server struct {
 
 	name        string
 	path        string
-	state       string
+	state       State
 	transporter Transporter
 	context     interface{}
 	currentTerm uint64
@@ -278,14 +299,14 @@ func (s *server) LogPath() string {
 }
 
 // Retrieves the current state of the server.
-func (s *server) State() string {
+func (s *server) State() State {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.state
 }
 
 // Sets the state of the server.
-func (s *server) setState(state string) {
+func (s *server) setState(state State) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
