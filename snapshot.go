@@ -54,7 +54,8 @@ type SnapshotResponse struct {
 // save writes the snapshot to file.
 func (ss *Snapshot) save() error {
 	// Open the file for writing.
-	file, err := os.OpenFile(ss.Path, os.O_CREATE|os.O_WRONLY, 0600)
+	tmpname := ss.Path + ".tmp"
+	file, err := os.OpenFile(tmpname, os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,7 @@ func (ss *Snapshot) save() error {
 		return err
 	}
 
-	return nil
+	return os.Rename(tmpname, ss.Path)
 }
 
 // remove deletes the snapshot file.
