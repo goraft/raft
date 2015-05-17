@@ -199,7 +199,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 			return c.Apply(&context{
 				server:       s,
 				currentTerm:  s.currentTerm,
-				currentIndex: s.log.internalCurrentIndex(),
+				currentIndex: e.Index(),
 				commitIndex:  s.log.commitIndex,
 			})
 		case deprecatedCommandApply:

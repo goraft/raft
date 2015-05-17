@@ -19,6 +19,7 @@ const (
 func init() {
 	RegisterCommand(&testCommand1{})
 	RegisterCommand(&testCommand2{})
+	RegisterCommand(&testApplyCommand{})
 }
 
 //------------------------------------------------------------------------------
@@ -193,5 +194,30 @@ func (c *testCommand2) CommandName() string {
 }
 
 func (c *testCommand2) Apply(server Server) (interface{}, error) {
+	return nil, nil
+}
+
+//-----------------------------------------------
+// ApplyCommand - testing passed content to Apply
+//-----------------------------------------------
+
+var appliedContexts []Context
+
+type testApplyCommand struct {
+	Val string `json:"val"`
+	I   int    `json:"i"`
+}
+
+func (c *testApplyCommand) CommandName() string {
+	return "cmd_apply"
+}
+
+func (c *testApplyCommand) Apply(context Context) (interface{}, error) {
+	if appliedContexts == nil {
+		appliedContexts = make([]Context, 0)
+	}
+
+	appliedContexts = append(appliedContexts, context)
+
 	return nil, nil
 }
