@@ -946,6 +946,10 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 
 	if req.Term == s.currentTerm {
 		_assert(s.State() != Leader, "leader.elected.at.same.term.%d\n", s.currentTerm)
+		
+		if s.leader != req.LeaderName {
+			s.DispatchEvent(newEvent(LeaderChangeEventType, req.LeaderName, s.leader))
+		}
 
 		// step-down to follower when it is a candidate
 		if s.state == Candidate {
