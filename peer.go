@@ -281,9 +281,9 @@ func (p *Peer) sendSnapshotRequest(req *SnapshotRequest) {
 
 // Sends an Snapshot Recovery request to the peer through the transport.
 func (p *Peer) sendSnapshotRecoveryRequest() {
-	req := newSnapshotRecoveryRequest(p.server.name, p.server.snapshot)
+	req := newSnapshotRecoveryRequestHeader(p.server.name, p.server.snapshot)
 	debugln("peer.snap.recovery.send: ", p.Name)
-	resp := p.server.Transporter().SendSnapshotRecoveryRequest(p.server, p, req)
+	resp := p.server.Transporter().SendSnapshotRecoveryRequest(p.server, p, req, p.server.StateMachine())
 
 	if resp == nil {
 		debugln("peer.snap.recovery.timeout: ", p.Name)

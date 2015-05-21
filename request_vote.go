@@ -2,7 +2,6 @@ package raft
 
 import (
 	"io"
-	"io/ioutil"
 
 	"code.google.com/p/gogoprotobuf/proto"
 	"github.com/goraft/raft/protobuf"
@@ -34,45 +33,38 @@ func newRequestVoteRequest(term uint64, candidateName string, lastLogIndex uint6
 	}
 }
 
-// Encodes the RequestVoteRequest to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (req *RequestVoteRequest) Encode(w io.Writer) (int, error) {
+func (req *RequestVoteRequest) Marshal() ([]byte, error) {
 	pb := &protobuf.RequestVoteRequest{
 		Term:          proto.Uint64(req.Term),
 		LastLogIndex:  proto.Uint64(req.LastLogIndex),
 		LastLogTerm:   proto.Uint64(req.LastLogTerm),
 		CandidateName: proto.String(req.CandidateName),
 	}
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
+	return proto.Marshal(pb)
+}
 
-	return w.Write(p)
+// Encodes the RequestVoteRequest to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (req *RequestVoteRequest) Encode(w io.Writer) (int, error) {
+	return encode(req, w)
+}
+
+func (req *RequestVoteRequest) Unmarshal(data []byte) error {
+	pb := &protobuf.RequestVoteRequest{}
+	if err := proto.Unmarshal(data, pb); err != nil {
+		return err
+	}
+	req.Term = pb.GetTerm()
+	req.LastLogIndex = pb.GetLastLogIndex()
+	req.LastLogTerm = pb.GetLastLogTerm()
+	req.CandidateName = pb.GetCandidateName()
+	return nil
 }
 
 // Decodes the RequestVoteRequest from a buffer. Returns the number of bytes read and
 // any error that occurs.
 func (req *RequestVoteRequest) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return -1, err
-	}
-
-	totalBytes := len(data)
-
-	pb := &protobuf.RequestVoteRequest{}
-	if err = proto.Unmarshal(data, pb); err != nil {
-		return -1, err
-	}
-
-	req.Term = pb.GetTerm()
-	req.LastLogIndex = pb.GetLastLogIndex()
-	req.LastLogTerm = pb.GetLastLogTerm()
-	req.CandidateName = pb.GetCandidateName()
-
-	return totalBytes, nil
+	return decode(req, r)
 }
 
 // Creates a new RequestVote response.
@@ -83,40 +75,35 @@ func newRequestVoteResponse(term uint64, voteGranted bool) *RequestVoteResponse 
 	}
 }
 
-// Encodes the RequestVoteResponse to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (resp *RequestVoteResponse) Encode(w io.Writer) (int, error) {
+func (resp *RequestVoteResponse) Marshal() ([]byte, error) {
 	pb := &protobuf.RequestVoteResponse{
 		Term:        proto.Uint64(resp.Term),
 		VoteGranted: proto.Bool(resp.VoteGranted),
 	}
 
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
+	return proto.Marshal(pb)
+}
+
+// Encodes the RequestVoteResponse to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (resp *RequestVoteResponse) Encode(w io.Writer) (int, error) {
+	return encode(resp, w)
+}
+
+func (resp *RequestVoteResponse) Unmarshal(data []byte) error {
+
+	pb := &protobuf.RequestVoteResponse{}
+	if err := proto.Unmarshal(data, pb); err != nil {
+		return err
 	}
 
-	return w.Write(p)
+	resp.Term = pb.GetTerm()
+	resp.VoteGranted = pb.GetVoteGranted()
+	return nil
 }
 
 // Decodes the RequestVoteResponse from a buffer. Returns the number of bytes read and
 // any error that occurs.
 func (resp *RequestVoteResponse) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-
-	if err != nil {
-		return 0, err
-	}
-
-	totalBytes := len(data)
-
-	pb := &protobuf.RequestVoteResponse{}
-	if err = proto.Unmarshal(data, pb); err != nil {
-		return -1, err
-	}
-
-	resp.Term = pb.GetTerm()
-	resp.VoteGranted = pb.GetVoteGranted()
-
-	return totalBytes, nil
+	return decode(resp, r)
 }

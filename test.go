@@ -146,8 +146,8 @@ func (t *testTransporter) SendSnapshotRequest(server Server, peer *Peer, req *Sn
 	return t.sendSnapshotRequestFunc(server, peer, req)
 }
 
-func (t *testTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
-	return t.SendSnapshotRecoveryRequest(server, peer, req)
+func (t *testTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequestHeader, body StateMachineIo) *SnapshotRecoveryResponse {
+	return t.SendSnapshotRecoveryRequest(server, peer, req, body)
 }
 
 type testStateMachine struct {

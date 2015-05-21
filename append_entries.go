@@ -2,7 +2,6 @@ package raft
 
 import (
 	"io"
-	"io/ioutil"
 
 	"code.google.com/p/gogoprotobuf/proto"
 	"github.com/goraft/raft/protobuf"
@@ -16,13 +15,6 @@ type AppendEntriesRequest struct {
 	CommitIndex  uint64
 	LeaderName   string
 	Entries      []*protobuf.LogEntry
-}
-
-// The response returned from a server appending entries to the log.
-type AppendEntriesResponse struct {
-	pb     *protobuf.AppendEntriesResponse
-	peer   string
-	append bool
 }
 
 // Creates a new AppendEntries request.
@@ -44,9 +36,7 @@ func newAppendEntriesRequest(term uint64, prevLogIndex uint64, prevLogTerm uint6
 	}
 }
 
-// Encodes the AppendEntriesRequest to a buffer. Returns the number of bytes
-// written and any error that may have occurred.
-func (req *AppendEntriesRequest) Encode(w io.Writer) (int, error) {
+func (req *AppendEntriesRequest) Marshal() ([]byte, error) {
 	pb := &protobuf.AppendEntriesRequest{
 		Term:         proto.Uint64(req.Term),
 		PrevLogIndex: proto.Uint64(req.PrevLogIndex),
@@ -56,26 +46,20 @@ func (req *AppendEntriesRequest) Encode(w io.Writer) (int, error) {
 		Entries:      req.Entries,
 	}
 
-	p, err := proto.Marshal(pb)
-	if err != nil {
-		return -1, err
-	}
-
-	return w.Write(p)
+	return proto.Marshal(pb)
 }
 
-// Decodes the AppendEntriesRequest from a buffer. Returns the number of bytes read and
-// any error that occurs.
-func (req *AppendEntriesRequest) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
+// Encodes the AppendEntriesRequest to a buffer. Returns the number of bytes
+// written and any error that may have occurred.
+func (req *AppendEntriesRequest) Encode(w io.Writer) (int, error) {
+	return encode(req, w)
+}
 
-	if err != nil {
-		return -1, err
-	}
+func (req *AppendEntriesRequest) Unmarshal(data []byte) error {
 
 	pb := new(protobuf.AppendEntriesRequest)
 	if err := proto.Unmarshal(data, pb); err != nil {
-		return -1, err
+		return err
 	}
 
 	req.Term = pb.GetTerm()
@@ -85,7 +69,20 @@ func (req *AppendEntriesRequest) Decode(r io.Reader) (int, error) {
 	req.LeaderName = pb.GetLeaderName()
 	req.Entries = pb.GetEntries()
 
-	return len(data), nil
+	return nil
+}
+
+// Decodes the AppendEntriesRequest from a buffer. Returns the number of bytes read and
+// any error that occurs.
+func (req *AppendEntriesRequest) Decode(r io.Reader) (int, error) {
+	return decode(req, r)
+}
+
+// The response returned from a server appending entries to the log.
+type AppendEntriesResponse struct {
+	pb     *protobuf.AppendEntriesResponse
+	peer   string
+	append bool
 }
 
 // Creates a new AppendEntries response.
@@ -118,29 +115,27 @@ func (aer *AppendEntriesResponse) Success() bool {
 	return aer.pb.GetSuccess()
 }
 
+func (resp *AppendEntriesResponse) Marshal() ([]byte, error) {
+	p, err := proto.Marshal(resp.pb)
+	return p, err
+}
+
 // Encodes the AppendEntriesResponse to a buffer. Returns the number of bytes
 // written and any error that may have occurred.
 func (resp *AppendEntriesResponse) Encode(w io.Writer) (int, error) {
-	b, err := proto.Marshal(resp.pb)
-	if err != nil {
-		return -1, err
-	}
+	return encode(resp, w)
+}
 
-	return w.Write(b)
+func (resp *AppendEntriesResponse) Unmarshal(b []byte) error {
+	if resp.pb == nil {
+		resp.pb = &protobuf.AppendEntriesResponse{}
+	}
+	err := resp.pb.Unmarshal(b)
+	return err
 }
 
 // Decodes the AppendEntriesResponse from a buffer. Returns the number of bytes read and
 // any error that occurs.
 func (resp *AppendEntriesResponse) Decode(r io.Reader) (int, error) {
-	data, err := ioutil.ReadAll(r)
-	if err != nil {
-		return -1, err
-	}
-
-	resp.pb = new(protobuf.AppendEntriesResponse)
-	if err := proto.Unmarshal(data, resp.pb); err != nil {
-		return -1, err
-	}
-
-	return len(data), nil
+	return decode(resp, r)
 }

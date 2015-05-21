@@ -202,23 +202,40 @@ func (t *HTTPTransporter) SendSnapshotRequest(server Server, peer *Peer, req *Sn
 }
 
 // Sends a SnapshotRequest RPC to a peer.
-func (t *HTTPTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
-	var b bytes.Buffer
-	if _, err := req.Encode(&b); err != nil {
-		traceln("transporter.rv.encoding.error:", err)
-		return nil
-	}
+func (t *HTTPTransporter) SendSnapshotRecoveryRequest(server Server, peer *Peer, req *SnapshotRecoveryRequestHeader, body StateMachineIo) *SnapshotRecoveryResponse {
 
 	url := joinPath(peer.ConnectionString, t.snapshotRecoveryPath)
 	traceln(server.Name(), "POST", url)
 
-	httpResp, err := t.httpClient.Post(url, "application/protobuf", &b)
+	// spin off writer function
+	pRead, pWrite := io.Pipe()
+	writeErr := make(chan error, 1)
+	go func() {
+		defer pWrite.Close()
+		if _, err := req.Encode(pWrite); err != nil {
+			writeErr <- fmt.Errorf("transporter.rv.encoding.error:%s", err)
+			return
+		}
+		if _, err := body.WriteSnapshot(pWrite); err != nil {
+			writeErr <- fmt.Errorf("err opening StateMachine snapshot:%s", err)
+			return
+		}
+		writeErr <- nil
+		return
+	}()
+
+	// invoke http request and get our response
+	httpResp, err := t.httpClient.Post(url, "application/protobuf", pRead)
 	if httpResp == nil || err != nil {
 		traceln("transporter.rv.response.error:", err)
 		return nil
 	}
 	defer httpResp.Body.Close()
-
+	err = <-writeErr
+	if err != nil {
+		traceln("transporter.rv.write.err:", err)
+		return nil
+	}
 	resp := &SnapshotRecoveryResponse{}
 	if _, err = resp.Decode(httpResp.Body); err != nil && err != io.EOF {
 		traceln("transporter.rv.decoding.error:", err)
@@ -242,7 +259,7 @@ func (t *HTTPTransporter) appendEntriesHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-
+		r.Body.Close()
 		resp := server.AppendEntries(req)
 		if resp == nil {
 			http.Error(w, "Failed creating response.", http.StatusInternalServerError)
@@ -265,6 +282,7 @@ func (t *HTTPTransporter) requestVoteHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
 		resp := server.RequestVote(req)
 		if resp == nil {
@@ -288,6 +306,7 @@ func (t *HTTPTransporter) snapshotHandler(server Server) http.HandlerFunc {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
 		resp := server.RequestSnapshot(req)
 		if resp == nil {
@@ -306,13 +325,14 @@ func (t *HTTPTransporter) snapshotRecoveryHandler(server Server) http.HandlerFun
 	return func(w http.ResponseWriter, r *http.Request) {
 		traceln(server.Name(), "RECV /snapshotRecovery")
 
-		req := &SnapshotRecoveryRequest{}
+		req := &SnapshotRecoveryRequestHeader{}
 		if _, err := req.Decode(r.Body); err != nil {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
+		r.Body.Close()
 
-		resp := server.SnapshotRecoveryRequest(req)
+		resp := server.SnapshotRecoveryRequest(req, r.Body)
 		if resp == nil {
 			http.Error(w, "Failed creating response.", http.StatusInternalServerError)
 			return

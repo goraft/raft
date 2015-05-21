@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/crc32"
+	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -68,7 +68,7 @@ var StopError = errors.New("raft: Has been stopped")
 type Server interface {
 	Name() string
 	Context() interface{}
-	StateMachine() StateMachine
+	StateMachine() StateMachineIo
 	Leader() string
 	State() string
 	Path() string
@@ -92,7 +92,7 @@ type Server interface {
 	AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 	RequestVote(req *RequestVoteRequest) *RequestVoteResponse
 	RequestSnapshot(req *SnapshotRequest) *SnapshotResponse
-	SnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse
+	SnapshotRecoveryRequest(req *SnapshotRecoveryRequestHeader, body io.ReadCloser) *SnapshotRecoveryResponse
 	AddPeer(name string, connectiongString string) error
 	RemovePeer(name string) error
 	Peers() map[string]*Peer
@@ -137,7 +137,7 @@ type server struct {
 	// set to nil.
 	pendingSnapshot *Snapshot
 
-	stateMachine            StateMachine
+	stateMachine            StateMachineIo
 	maxLogEntriesPerRequest uint64
 
 	connectionString string
@@ -170,12 +170,21 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 	if transporter == nil {
 		panic("raft: Transporter required")
 	}
-
+	// wire in either a streaming-based or a []byte based statemachine
+	var stateMachineIo StateMachineIo
+	switch t := stateMachine.(type) {
+	case StateMachineIo:
+		stateMachineIo = t
+	case StateMachineBytes:
+		stateMachineIo = &StateMachineIoWrapper{t}
+	default:
+		panic("raft:  StateMachine must implement either StateMachineBytes or StateMachineIo")
+	}
 	s := &server{
 		name:                    name,
 		path:                    path,
 		transporter:             transporter,
-		stateMachine:            stateMachine,
+		stateMachine:            stateMachineIo,
 		context:                 ctx,
 		state:                   Stopped,
 		peers:                   make(map[string]*Peer),
@@ -268,7 +277,7 @@ func (s *server) Context() interface{} {
 }
 
 // Retrieves the state machine passed into the constructor.
-func (s *server) StateMachine() StateMachine {
+func (s *server) StateMachine() StateMachineIo {
 	return s.stateMachine
 }
 
@@ -877,7 +886,7 @@ func (s *server) snapshotLoop() {
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *RequestVoteRequest:
 				e.returnValue, _ = s.processRequestVoteRequest(req)
-			case *SnapshotRecoveryRequest:
+			case *snapRecovReqAndBody:
 				e.returnValue = s.processSnapshotRecoveryRequest(req)
 			}
 			// Callback to event.
@@ -1199,12 +1208,7 @@ func (s *server) TakeSnapshot() error {
 
 	path := s.SnapshotPath(lastIndex, lastTerm)
 	// Attach snapshot to pending snapshot and save it to disk.
-	s.pendingSnapshot = &Snapshot{lastIndex, lastTerm, nil, nil, path}
-
-	state, err := s.stateMachine.Save()
-	if err != nil {
-		return err
-	}
+	s.pendingSnapshot = &Snapshot{lastIndex, lastTerm, nil, path}
 
 	// Clone the list of peers.
 	peers := make([]*Peer, 0, len(s.peers)+1)
@@ -1215,9 +1219,23 @@ func (s *server) TakeSnapshot() error {
 
 	// Attach snapshot to pending snapshot and save it to disk.
 	s.pendingSnapshot.Peers = peers
-	s.pendingSnapshot.State = state
-	s.saveSnapshot()
-
+	// pipe state machine to snapshot file
+	snapOut, err := s.pendingSnapshot.writeState()
+	if err != nil {
+		return err
+	}
+	_, err = s.StateMachine().WriteSnapshot(snapOut)
+	if err != nil {
+		return err
+	}
+	err = snapOut.Close()
+	if err != nil {
+		return err
+	}
+	err = s.savePendingSnapshot()
+	if err != nil {
+		return err
+	}
 	// We keep some log entries after the snapshot.
 	// We do not want to send the whole snapshot to the slightly slow machines
 	if lastIndex-s.log.startIndex > NumberOfLogEntriesAfterSnapshot {
@@ -1229,15 +1247,10 @@ func (s *server) TakeSnapshot() error {
 	return nil
 }
 
-// Retrieves the log path for the server.
-func (s *server) saveSnapshot() error {
+// moves pending snapshot into position and removes previous snap
+func (s *server) savePendingSnapshot() error {
 	if s.pendingSnapshot == nil {
 		return errors.New("pendingSnapshot.is.nil")
-	}
-
-	// Write snapshot to disk.
-	if err := s.pendingSnapshot.save(); err != nil {
-		return err
 	}
 
 	// Swap the current and last snapshots.
@@ -1280,16 +1293,40 @@ func (s *server) processSnapshotRequest(req *SnapshotRequest) *SnapshotResponse 
 	return newSnapshotResponse(true)
 }
 
-func (s *server) SnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
-	ret, _ := s.send(req)
+type snapRecovReqAndBody struct {
+	req  *SnapshotRecoveryRequestHeader
+	body io.ReadCloser
+}
+
+func (s *server) SnapshotRecoveryRequest(req *SnapshotRecoveryRequestHeader, body io.ReadCloser) *SnapshotRecoveryResponse {
+	ret, _ := s.send(&snapRecovReqAndBody{req, body})
 	resp, _ := ret.(*SnapshotRecoveryResponse)
 	return resp
 }
 
-func (s *server) processSnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *SnapshotRecoveryResponse {
-	// Recover state sent from request.
-	if err := s.stateMachine.Recovery(req.State); err != nil {
-		panic("cannot recover from previous state")
+func (s *server) processSnapshotRecoveryRequest(r *snapRecovReqAndBody) *SnapshotRecoveryResponse {
+	req := r.req
+	// Create local snapshot.
+	s.pendingSnapshot = &Snapshot{req.LastIndex, req.LastTerm, req.Peers, s.SnapshotPath(req.LastIndex, req.LastTerm)}
+
+	// we want to tee the state from req.body into both our state machine and a backup snapshot
+	snapOut, err := s.pendingSnapshot.writeState()
+	if err != nil {
+		panic("Couldn't create new snapshot file!")
+	}
+	tee := io.TeeReader(r.body, snapOut)
+	err = s.stateMachine.RecoverSnapshot(tee)
+	if err != nil {
+		panic("Couldn't recover state machine from snapshot!")
+	}
+	err = snapOut.Close()
+	if err != nil {
+		panic("Couldn't write snapshot file!")
+	}
+
+	err = s.savePendingSnapshot()
+	if err != nil {
+		panic(fmt.Errorf("Couldn't save pending snapshot: %s", err))
 	}
 
 	// Recover the cluster configuration.
@@ -1297,14 +1334,9 @@ func (s *server) processSnapshotRecoveryRequest(req *SnapshotRecoveryRequest) *S
 	for _, peer := range req.Peers {
 		s.AddPeer(peer.Name, peer.ConnectionString)
 	}
-
 	// Update log state.
 	s.currentTerm = req.LastTerm
 	s.log.updateCommitIndex(req.LastIndex)
-
-	// Create local snapshot.
-	s.pendingSnapshot = &Snapshot{req.LastIndex, req.LastTerm, req.Peers, req.State, s.SnapshotPath(req.LastIndex, req.LastTerm)}
-	s.saveSnapshot()
 
 	// Clear the previous log entries.
 	s.log.compact(req.LastIndex, req.LastTerm)
@@ -1339,42 +1371,15 @@ func (s *server) LoadSnapshot() error {
 	snapshotPath := path.Join(s.path, "snapshot", filenames[len(filenames)-1])
 
 	// Read snapshot data.
-	file, err := os.OpenFile(snapshotPath, os.O_RDONLY, 0)
+	var state io.ReadCloser
+	s.snapshot, state, err = readSnapState(snapshotPath)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
-	// Check checksum.
-	var checksum uint32
-	n, err := fmt.Fscanf(file, "%08x\n", &checksum)
-	if err != nil {
-		return err
-	} else if n != 1 {
-		return errors.New("checksum.err: bad.snapshot.file")
-	}
-
-	// Load remaining snapshot contents.
-	b, err := ioutil.ReadAll(file)
-	if err != nil {
-		return err
-	}
-
-	// Generate checksum.
-	byteChecksum := crc32.ChecksumIEEE(b)
-	if uint32(checksum) != byteChecksum {
-		s.debugln(checksum, " ", byteChecksum)
-		return errors.New("bad snapshot file")
-	}
-
-	// Decode snapshot.
-	if err = json.Unmarshal(b, &s.snapshot); err != nil {
-		s.debugln("unmarshal.snapshot.error: ", err)
-		return err
-	}
+	defer state.Close()
 
 	// Recover snapshot into state machine.
-	if err = s.stateMachine.Recovery(s.snapshot.State); err != nil {
+	if err = s.stateMachine.RecoverSnapshot(state); err != nil {
 		s.debugln("recovery.snapshot.error: ", err)
 		return err
 	}

@@ -1,12 +1,74 @@
 package raft
 
 import (
+	"code.google.com/p/gogoprotobuf/proto"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand"
 	"os"
 	"time"
 )
+
+// encode marshaler with length prepended, doesn't close stream
+func encode(p proto.Marshaler, w io.Writer) (n int, err error) {
+	b, err := p.Marshal()
+	if err != nil {
+		return -1, err
+	}
+	length := make([]byte, 4, 4)
+	binary.LittleEndian.PutUint32(length, uint32(len(b)))
+	nWrit := 0
+	for nWrit < 4 {
+		w, err := w.Write(length[nWrit:])
+		if w > 0 {
+			nWrit += w
+		}
+		if err != nil {
+			return nWrit, err
+		}
+	}
+	nWrit = 0
+	for nWrit < len(b) {
+		w, err := w.Write(b[nWrit:])
+		if w > 0 {
+			nWrit += w
+		}
+		if err != nil {
+			return nWrit + 4, err
+		}
+	}
+	return nWrit + 4, nil
+}
+
+// decode marshaler with length prepended, doesn't rely on stream close
+func decode(p proto.Unmarshaler, r io.Reader) (n int, err error) {
+	length := make([]byte, 4, 4)
+	nRead := 0
+	for nRead < 4 {
+		r, err := r.Read(length[nRead:])
+		if r > 0 {
+			nRead += r
+		}
+		if err != nil {
+			return nRead, err
+		}
+	}
+	buffLen := int(binary.LittleEndian.Uint32(length))
+	b := make([]byte, buffLen, buffLen)
+	nRead = 0
+	for nRead < buffLen {
+		r, err := r.Read(b[nRead:])
+		if r > 0 {
+			nRead += r
+		}
+		if err != nil {
+			return nRead + 4, err
+		}
+	}
+	err = p.Unmarshal(b)
+	return nRead + 4, err
+}
 
 // uint64Slice implements sort interface
 type uint64Slice []uint64
