@@ -1237,6 +1237,7 @@ func (s *server) saveSnapshot() error {
 
 	// Write snapshot to disk.
 	if err := s.pendingSnapshot.save(); err != nil {
+		s.pendingSnapshot = nil
 		return err
 	}
 
